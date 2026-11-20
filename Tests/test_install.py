@@ -85,6 +85,47 @@ class InstallTests(unittest.TestCase):
             installer.install(self.archive, self.sums, self.root / "apps", bindir)
         self.assertEqual(os.readlink(bindir / "splash-finish"), "/tmp/other")
 
+    def test_default_is_applications_and_legacy_copy_is_replaced(self):
+        self.assertEqual(installer.DEFAULT_APP_DIR, Path("/Applications"))
+        self.make_zip({"Splash Finish.app/Contents/MacOS/SplashFinish": "binary"})
+        apps, legacy_dir, bindir = self.root / "Applications", self.root / "home/Applications", self.root / "bin"
+        legacy = legacy_dir / "Splash Finish.app"
+        (legacy / "Contents/MacOS").mkdir(parents=True)
+        (legacy / "Contents/MacOS/SplashFinish").write_text("old")
+        bindir.mkdir()
+        (bindir / "splash-finish").symlink_to(legacy / "Contents/MacOS/SplashFinish")
+        def fake_run(args):
+            if args[0] == "/usr/bin/ditto":
+                with zipfile.ZipFile(args[3]) as bundle:
+                    bundle.extractall(args[4])
+            return installer.subprocess.CompletedProcess(args, 0, "", "")
+        with patch.object(installer, "run", side_effect=fake_run), \
+             patch.object(installer, "verify_signature"), patch.object(installer, "quit_running_app") as quit_app, \
+             patch.object(installer.subprocess, "run"):
+            destination = installer.install(self.archive, self.sums, apps, bindir, legacy_app_dir=legacy_dir)
+        self.assertEqual(destination, apps / "Splash Finish.app")
+        self.assertTrue((destination / "Contents/MacOS/SplashFinish").is_file())
+        self.assertFalse(legacy.exists())
+        self.assertEqual(os.readlink(bindir / "splash-finish"), str(destination / "Contents/MacOS/SplashFinish"))
+        quit_app.assert_called()
+
+    def test_foreign_legacy_copy_is_kept(self):
+        self.make_zip({"Splash Finish.app/Contents/MacOS/SplashFinish": "binary"})
+        legacy_dir = self.root / "home/Applications"
+        (legacy_dir / "Splash Finish.app/Contents").mkdir(parents=True)
+        def fake_run(args):
+            if args[0] == "/usr/bin/ditto":
+                with zipfile.ZipFile(args[3]) as bundle:
+                    bundle.extractall(args[4])
+            return installer.subprocess.CompletedProcess(args, 0, "", "")
+        def signature(app):
+            if app.parent == legacy_dir:
+                raise installer.InstallError("other team")
+        with patch.object(installer, "run", side_effect=fake_run), patch.object(installer, "verify_signature", side_effect=signature), \
+             patch.object(installer, "quit_running_app"), patch.object(installer.subprocess, "run"):
+            installer.install(self.archive, self.sums, self.root / "Applications", self.root / "bin", legacy_app_dir=legacy_dir)
+        self.assertTrue((legacy_dir / "Splash Finish.app").exists())
+
     def test_signature_must_match_developer(self):
         from subprocess import CompletedProcess
         with patch.object(installer, "run", side_effect=[CompletedProcess([], 0, "", ""), CompletedProcess([], 0, "", "TeamIdentifier=OTHER")]):

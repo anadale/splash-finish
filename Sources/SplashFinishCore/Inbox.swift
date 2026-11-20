@@ -1,3 +1,4 @@
+import BobukCore
 import Foundation
 
 public struct EventOrder: Codable, Equatable, Sendable {
@@ -141,7 +142,7 @@ public struct StateFile {
     public let url: URL
     public init(url: URL) { self.url = url }
     public func load() throws -> Inbox {
-        try SafeFiles.check(url)
+        try SafeFile.check(url)
         guard FileManager.default.fileExists(atPath: url.path) else { return Inbox() }
         let data = try Data(contentsOf: url)
         // 200 bounded Markdown payloads, including JSON escaping and source metadata.
@@ -149,18 +150,26 @@ public struct StateFile {
         return try JSONDecoder().decode(Inbox.self, from: data)
     }
     public func save(_ inbox: Inbox) throws {
-        try SafeFiles.prepareDirectory(url.deletingLastPathComponent())
-        try SafeFiles.write(try JSONEncoder().encode(inbox), to: url)
+        try SafeFile.prepareDirectory(url.deletingLastPathComponent())
+        try SafeFile.write(try JSONEncoder().encode(inbox), to: url)
     }
 }
 
-public enum AppPaths {
+/// Names shared by the app, its command line and the installer.
+public enum Splash {
     public static let bundleID = "io.bobuk.splash-finish"
-    public static var support: URL {
-        if let override = ProcessInfo.processInfo.environment["SPLASH_FINISH_HOME"] {
-            return URL(fileURLWithPath: override, isDirectory: true)
-        }
-        return FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Splash Finish", isDirectory: true)
+    /// Shown when the app or an installation already holds a lock.
+    public static let busyMessage = "Splash Finish is already running or another installation is in progress"
+}
+
+public extension AppPaths {
+    /// `~/Library/Application Support/Splash Finish`, or every file in `SPLASH_FINISH_HOME`.
+    static func splashFinish(environment: [String: String] = ProcessInfo.processInfo.environment,
+                             home: URL = FileManager.default.homeDirectoryForCurrentUser) -> AppPaths {
+        AppPaths(supportFolder: "Splash Finish", configFileName: "state.json",
+                 folderOverrideVariable: "SPLASH_FINISH_HOME", environment: environment, home: home)
     }
-    public static var state: URL { support.appendingPathComponent("state.json") }
+
+    /// The inbox state file.
+    var state: URL { file("state.json") }
 }

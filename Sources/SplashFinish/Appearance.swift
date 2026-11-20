@@ -1,53 +1,65 @@
 import AppKit
 import SwiftUI
-import ServiceManagement
+import BobukSystem
+import BobukUI
 
-/// Keep the existing dark appearance until the user chooses another theme.
-enum AppTheme: String, CaseIterable, Identifiable {
-    case light, dark
-
+extension AppearanceChoice {
+    /// Kept from earlier versions, which saved "light" or "dark" here.
     static let defaultsKey = "appTheme"
-    var id: String { rawValue }
-    var title: String { self == .light ? "Light" : "Dark" }
-
-    @MainActor static func applySaved() {
-        let theme = AppTheme(rawValue: UserDefaults.standard.string(forKey: defaultsKey) ?? "") ?? .dark
-        NSApp.appearance = NSAppearance(named: theme == .light ? .aqua : .darkAqua)
-    }
+    /// Settings offers Light and Dark only.
+    static let offered: [AppearanceChoice] = [.light, .dark]
+    /// The saved choice; the inbox stays dark until the user chooses Light.
+    static var saved: AppearanceChoice { stored(key: defaultsKey, fallback: .dark) }
 }
 
 extension NSColor {
-    static func theme(light: UInt32, dark: UInt32) -> NSColor {
-        NSColor(name: nil) { appearance in
-            let hex = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? dark : light
-            return NSColor(srgbRed: Double((hex >> 16) & 255) / 255,
-                           green: Double((hex >> 8) & 255) / 255,
-                           blue: Double(hex & 255) / 255, alpha: 1)
-        }
-    }
+    /// Splash Finish's ink is pure white in the dark theme, unlike `BobukColors.ink`.
+    static let panelInk = NSColor.dynamic(light: 0x222A2E, dark: 0xFFFFFF)
 }
 
 extension Color {
-    static func theme(light: UInt32, dark: UInt32) -> Color {
-        Color(nsColor: .theme(light: light, dark: dark))
+    static var panelInk: Color { Color(nsColor: .panelInk) }
+    static var panelMuted: Color { Color(nsColor: BobukColors.muted) }
+    static var panelAccent: Color { Color(nsColor: BobukColors.amber) }
+}
+
+extension PickerPalette {
+    /// The inbox palette: the shared graphite and amber with Splash Finish's ink and a stronger
+    /// border when the system asks for more contrast.
+    static func splash(increasedContrast: Bool) -> PickerPalette {
+        PickerPalette(surface: BobukColors.panel, text: .panelInk, secondary: BobukColors.muted,
+                      accent: BobukColors.amber,
+                      border: increasedContrast ? .dynamic(light: 0x46545B, dark: 0xA0B0B4) : BobukColors.stroke,
+                      badgeInk: .textColor)
     }
-    static var panelInk: Color { .theme(light: 0x222A2E, dark: 0xFFFFFF) }
-    static var panelMuted: Color { .theme(light: 0x59666C, dark: 0xA4AFB3) }
-    static var panelAccent: Color { .theme(light: 0x885500, dark: 0xE7BB74) }
+
+    /// The palette for the current accessibility setting (update window).
+    @MainActor static var splash: PickerPalette {
+        splash(increasedContrast: NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast)
+    }
+}
+
+extension ChromeStyle {
+    /// Settings and Integrations hold native forms: system chrome with the Splash Finish accent.
+    static var splashWindow: ChromeStyle {
+        var style = ChromeStyle.system
+        style.accent = BobukColors.amber
+        return style
+    }
 }
 
 struct SettingsView: View {
     let model: AppModel
     let installSkills: () -> Void
     let uninstallSkills: () -> Void
-    @AppStorage(AppTheme.defaultsKey) private var theme = AppTheme.dark.rawValue
-    @State private var startsAtLogin = SMAppService.mainApp.status == .enabled
+    @AppStorage(AppearanceChoice.defaultsKey) private var theme = AppearanceChoice.dark.rawValue
+    @State private var startsAtLogin = LoginItem.isEnabled
 
     var body: some View {
         Form {
             Picker("Appearance", selection: $theme) {
-                ForEach(AppTheme.allCases) { theme in
-                    Text(theme.title).tag(theme.rawValue)
+                ForEach(AppearanceChoice.offered) { choice in
+                    Text(choice.title).tag(choice.rawValue)
                 }
             }
             .pickerStyle(.segmented)
@@ -55,9 +67,10 @@ struct SettingsView: View {
             Section("General") {
                 Toggle("Start at Login", isOn: Binding(
                     get: { startsAtLogin },
-                    set: { _ in
-                        LoginItem.toggle(model: model)
-                        startsAtLogin = SMAppService.mainApp.status == .enabled
+                    set: { value in
+                        // Opens Login Items in System Settings when macOS asks for approval.
+                        do { try LoginItem.set(value) } catch { model.report(error); model.show() }
+                        startsAtLogin = LoginItem.isEnabled
                     }
                 ))
                 Toggle("Respect Do Not Disturb", isOn: Binding(
@@ -78,9 +91,9 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         .frame(width: 440, height: 300)
-        .onChange(of: theme) { _, _ in AppTheme.applySaved() }
+        .onChange(of: theme) { _, _ in AppearanceChoice.saved.apply() }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            startsAtLogin = SMAppService.mainApp.status == .enabled
+            startsAtLogin = LoginItem.isEnabled
         }
     }
 }

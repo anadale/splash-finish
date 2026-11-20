@@ -1,5 +1,5 @@
 import AppKit
-import Darwin
+import BobukCore
 import SplashFinishCore
 
 @MainActor enum OrcaNavigator {
@@ -53,7 +53,7 @@ import SplashFinishCore
     /// runtime client. That client is bundled with the installed app and needs a
     /// Node runtime, which Electron provides through ELECTRON_RUN_AS_NODE.
     private static func revealChat(_ session: String, app: URL, completion: @escaping (Bool) -> Void) {
-        guard let script = AppBundle.resources()?.url(forResource: "reveal-agent-session", withExtension: "js", subdirectory: "Orca"),
+        guard let script = CLI.resources?.url(forResource: "reveal-agent-session", withExtension: "js", subdirectory: "Orca"),
               let executable = Bundle(url: app)?.executableURL,
               FileManager.default.isExecutableFile(atPath: executable.path) else { completion(false); return }
         let resources = app.appendingPathComponent("Contents/Resources")
@@ -82,41 +82,12 @@ import SplashFinishCore
     /// Never use a shell or allow event data to choose an executable/subcommand.
     private static func run(_ executable: URL, _ arguments: [String], environment: [String: String],
                             timeout: TimeInterval, completion: @escaping (Data?) -> Void) {
-        DispatchQueue.global(qos: .userInitiated).async {
-            let process = Process()
-            let pipe = Pipe()
-            process.executableURL = executable
-            process.arguments = arguments
-            process.environment = environment
-            process.standardOutput = pipe
-            process.standardError = FileHandle.nullDevice
-            do {
-                try process.run()
-                let timeoutItem = DispatchWorkItem {
-                    if process.isRunning { process.terminate() }
-                    DispatchQueue.global().asyncAfter(deadline: .now() + 0.3) {
-                        if process.isRunning { kill(process.processIdentifier, SIGKILL) }
-                    }
-                }
-                DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: timeoutItem)
-                defer { timeoutItem.cancel(); try? pipe.fileHandleForReading.close() }
-                var output = Data()
-                var oversized = false
-                while let chunk = try pipe.fileHandleForReading.read(upToCount: 16384), !chunk.isEmpty {
-                    output.append(chunk)
-                    if output.count > 2_000_000 {
-                        oversized = true
-                        if process.isRunning { kill(process.processIdentifier, SIGKILL) }
-                        break
-                    }
-                }
-                process.waitUntilExit()
-                let result = !oversized && process.terminationStatus == 0 ? output : nil
-                DispatchQueue.main.async { completion(result) }
-            } catch {
-                if process.isRunning { kill(process.processIdentifier, SIGKILL) }
-                DispatchQueue.main.async { completion(nil) }
-            }
+        let request = ChildProcessRequest(executable: executable.path, arguments: arguments, environment: environment,
+                                          timeLimit: timeout, outputLimit: 2_000_000)
+        Task {
+            let outcome = await ChildProcess.run(request)
+            // A time-out, a failure or oversized output is no answer.
+            completion(outcome.end == .exited(0) && !outcome.stdoutCut ? outcome.stdout : nil)
         }
     }
 }

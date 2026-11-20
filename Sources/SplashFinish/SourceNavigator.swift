@@ -1,4 +1,5 @@
 import AppKit
+import BobukCore
 import Darwin
 import SplashFinishCore
 
@@ -16,7 +17,7 @@ import SplashFinishCore
         for _ in 0..<48 {
             guard pid > 1 else { break }
             if let app = NSRunningApplication(processIdentifier: pid),
-               let bundleID = app.bundleIdentifier, bundleID != AppPaths.bundleID,
+               let bundleID = app.bundleIdentifier, bundleID != Splash.bundleID,
                app.activationPolicy != .prohibited {
                 let pane = bundleID == "com.github.wez.wezterm" ? env["WEZTERM_PANE"].flatMap(UInt64.init) : nil
                 return EventSource(pid: pid, bundleID: bundleID, weztermPane: pane)
@@ -59,26 +60,19 @@ import SplashFinishCore
            let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.github.wez.wezterm") {
             let cli = app.appendingPathComponent("Contents/MacOS/wezterm")
             if FileManager.default.isExecutableFile(atPath: cli.path) {
-                let process = Process(); process.executableURL = cli
-                process.arguments = ["cli", "--no-auto-start", "activate-pane", "--pane-id", String(pane)]
-                process.standardOutput = FileHandle.nullDevice; process.standardError = FileHandle.nullDevice
-                process.terminationHandler = { process in
-                    DispatchQueue.main.async {
-                        if process.terminationStatus == 0,
-                           NSRunningApplication.runningApplications(withBundleIdentifier: "com.github.wez.wezterm").first?.activate(options: []) == true {
-                            completion(true)
-                        } else {
-                            activateApp(event, model: model, completion: completion)
-                        }
+                let request = ChildProcessRequest(
+                    executable: cli.path, arguments: ["cli", "--no-auto-start", "activate-pane", "--pane-id", String(pane)],
+                    environment: ProcessInfo.processInfo.environment, timeLimit: 3, outputLimit: 65_536)
+                Task {
+                    // A failure, a time-out or a CLI that cannot start falls back to activating the app.
+                    if await ChildProcess.run(request).end == .exited(0),
+                       NSRunningApplication.runningApplications(withBundleIdentifier: "com.github.wez.wezterm").first?.activate(options: []) == true {
+                        completion(true)
+                    } else {
+                        activateApp(event, model: model, completion: completion)
                     }
                 }
-                do {
-                    try process.run()
-                    DispatchQueue.global().asyncAfter(deadline: .now() + 3) {
-                        if process.isRunning { process.terminate() }
-                    }
-                    return
-                } catch { /* Fall back to activating the source app. */ }
+                return
             }
         }
         activateApp(event, model: model, completion: completion)

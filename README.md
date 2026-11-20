@@ -17,7 +17,7 @@ open "/Applications/Splash Finish.app"
 
 Homebrew installs the app and the `splash-finish` CLI. If it requests cask trust, run `brew trust --cask bobuk-io/tap/splash-finish` and repeat the install command.
 
-Keep one installation method. To move from the standalone installer, quit Splash Finish, remove only its old app in `~/Applications` and its old CLI symlink, then install with Homebrew. Keep `~/Library/Application Support/Splash Finish` to preserve the inbox. Run `splash-finish install-skills` afterward to refresh paths in agent integrations. Do not use `--force` to overwrite a different copy.
+Keep one installation method. To move from the standalone installer, quit Splash Finish, remove only its old app (`/Applications/Splash Finish.app`, or `~/Applications/Splash Finish.app` from older installers) and its old CLI symlink, then install with Homebrew. Keep `~/Library/Application Support/Splash Finish` to preserve the inbox. Run `splash-finish install-skills` afterward to refresh paths in agent integrations. Do not use `--force` to overwrite a different copy.
 
 ### Standalone installer
 
@@ -28,7 +28,7 @@ curl -fsSL https://raw.githubusercontent.com/bobuk-io/splash-finish/main/install
   | python3 -
 ```
 
-The installer downloads the latest release, checks its SHA-256 and Developer ID signature, installs `Splash Finish.app` in `~/Applications`, and adds `splash-finish` to the first of `~/.local/bin`, `~/bin`, or `~/.bin` already on `PATH`. Otherwise it uses `~/.local/bin` and prints the line to add to your shell. Run it again to update.
+The installer downloads the latest release, checks its SHA-256 and Developer ID signature, installs `Splash Finish.app` in `/Applications` (an administrator account needs no `sudo`; otherwise pass `--app-dir ~/Applications`), replaces and removes a copy that older installers put in `~/Applications`, and adds `splash-finish` to the first of `~/.local/bin`, `~/bin`, or `~/.bin` already on `PATH`. Otherwise it uses `~/.local/bin` and prints the line to add to your shell. Run it again to update.
 
 The release is signed with Developer ID and notarized by Apple.
 
@@ -177,15 +177,17 @@ Question text and answers travel over a per-request local Unix socket in a user-
 splash-finish uninstall-skills
 ```
 
-Quit Splash Finish from its menu. Remove `~/Applications/Splash Finish.app` and the `splash-finish` symlink from your local bin directory. If you also want to erase the inbox, remove `~/Library/Application Support/Splash Finish`. Existing hook backups are left beside the agent config files for you to inspect or remove.
+Quit Splash Finish from its menu. Remove `/Applications/Splash Finish.app` (or `~/Applications/Splash Finish.app` from older installers) and the `splash-finish` symlink from your local bin directory. If you also want to erase the inbox, remove `~/Library/Application Support/Splash Finish`. Existing hook backups are left beside the agent config files for you to inspect or remove.
 
 For a Homebrew installation, turn off **Start at Login**, run `splash-finish uninstall-skills`, quit the app, then run `brew uninstall --cask bobuk-io/tap/splash-finish`. This retains your data. Add `--zap` only to deliberately remove the inbox and app preferences; agent configuration backups are still retained.
 
 ## 🛠️ Development
 
 Splash Finish uses [BobukKit](https://github.com/bobuk-io/BobukKit) for the inbox
-window frame and wrapping shortcut hints. Notification cards, link hit targets,
-question forms and keyboard commands remain app-owned.
+panel and its frame, the Settings and Integrations windows, shortcut hints, colors,
+safe file writes, the ⌥⌘S hotkey, the login item, child processes and the
+Homebrew/Sparkle update flow (Sparkle itself stays an app dependency). Notification
+cards, link hit targets, question forms and keyboard commands remain app-owned.
 
 BobukKit is a self-contained local package at `Vendor/BobukKit`. Do not edit that
 copy: change `~/GitHub/bobuk.io/BobukKit`, then run its `Scripts/sync.sh` and
@@ -199,7 +201,7 @@ bash Scripts/release/test_kit.sh    # offline release kit checks (publication or
 python3 -m unittest discover -s Tests -v
 node Tests/pi-extension.test.mjs       # Node 22.18+ for TypeScript stripping
 node Tests/pi-questions.test.mjs
-Scripts/compile_and_run.sh --test      # ad-hoc local build
+Scripts/run.sh                         # ad-hoc local build in build/, started like the other bobuk-io apps
 # With an active macOS desktop and no existing Splash Finish process:
 SPLASH_FINISH_GUI_TESTS=1 python3 -m unittest discover -s Tests -p test_app_smoke.py -v
 ```
@@ -219,7 +221,7 @@ APP_IDENTITY='Developer ID Application: YOUR NAME (TEAMID)' NOTARY_PROFILE=YOUR_
   Scripts/release_next.sh
 ```
 
-It raises the patch version and `BUILD_NUMBER`, runs the Swift, installer and pi tests in the background while it builds, checks, notarizes and staples the universal app, signs the Sparkle appcast, installs the release in `~/Applications` and restarts it, commits and pushes, publishes the GitHub release (with `SplashFinish-<version>-universal.zip`, `SHA256SUMS` and the GitHub `appcast.xml` for 0.3.12 and older), updates `bobuk-io/homebrew-tap/Casks/splash-finish.rb` from the published archive digest, deploys the landing site with the feed and checks `https://bobuk.io/apps/splash-finish/appcast.xml`. After a failure, run the same command again. `Scripts/release/doctor.sh` checks readiness without changing anything. The signing identity used by the installer is pinned to the project's Developer ID team; update `TEAM_ID` in `install.py` if the project changes hands.
+It raises the patch version and `BUILD_NUMBER`, runs the Swift, installer and pi tests in the background while it builds, checks, notarizes and staples the universal app, signs the Sparkle appcast, installs the release in `/Applications` and restarts it, commits and pushes, publishes the GitHub release (with `SplashFinish-<version>-universal.zip`, `SHA256SUMS` and the GitHub `appcast.xml` for 0.3.12 and older), updates `bobuk-io/homebrew-tap/Casks/splash-finish.rb` from the published archive digest, deploys the landing site with the feed and checks `https://bobuk.io/apps/splash-finish/appcast.xml`. After a failure, run the same command again. `Scripts/release/doctor.sh` checks readiness without changing anything. The signing identity used by the installer is pinned to the project's Developer ID team; update `TEAM_ID` in `install.py` if the project changes hands.
 
 ### Sparkle updates
 

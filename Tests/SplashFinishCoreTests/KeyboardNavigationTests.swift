@@ -48,5 +48,6 @@ final class KeyboardNavigationTests: XCTestCase {
         XCTAssertNil(action(51, repeat: true))
         XCTAssertNil(action(36, repeat: true))
         XCTAssertEqual(action(125, repeat: true), .next)
+        XCTAssertEqual(([53, 51, 36, 76, 126, 125] as [UInt16]).filter { PanelKeyAction.isOneShot(keyCode: $0) }, [53, 51, 36, 76])
     }
 }

@@ -3,13 +3,6 @@ import SwiftUI
 import SplashFinishCore
 import BobukUI
 
-extension Color {
-    init(hex: UInt32) {
-        self.init(.sRGB, red: Double((hex >> 16) & 255) / 255,
-                  green: Double((hex >> 8) & 255) / 255, blue: Double(hex & 255) / 255, opacity: 1)
-    }
-}
-
 struct FinishMark: View {
     var color = Color.panelAccent
     var body: some View {
@@ -18,15 +11,6 @@ struct FinishMark: View {
             Capsule().frame(width: 4, height: 19)
             Capsule().frame(width: 4, height: 11).offset(y: -4)
         }.foregroundStyle(color).frame(width: 24, height: 26).accessibilityHidden(true)
-    }
-}
-
-private struct QuietButtonStyle: ButtonStyle {
-    @Environment(\.colorSchemeContrast) private var contrast
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .background(Color.panelInk.opacity(configuration.isPressed ? 0.14 : 0.045), in: .rect(cornerRadius: 6))
-            .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.panelInk.opacity(contrast == .increased ? 0.5 : 0.08)))
     }
 }
 
@@ -46,8 +30,8 @@ private struct NotificationRow: View {
     let onOpen: () -> Void
     let onDismiss: () -> Void
     let selected: Bool
+    let palette: PickerPalette
     @State private var hovered = false
-    @State private var dismissHovered = false
     private let muted = Color.panelMuted
     private var sourceAction: String {
         if event.source?.url != nil { return "Open source session" }
@@ -66,16 +50,15 @@ private struct NotificationRow: View {
                     VStack(spacing: 8) {
                         Image(systemName: event.status == .attention ? "exclamationmark" : "checkmark")
                             .font(.system(size: 11, weight: .bold))
-                            .foregroundStyle(event.status == .attention ? Color.panelAccent : Color.theme(light: 0x286444, dark: 0x9CC9AE))
+                            .foregroundStyle(event.status == .attention ? Color.panelAccent : Color.dynamic(light: 0x286444, dark: 0x9CC9AE))
                             .frame(width: 23, height: 23)
-                            .background(event.status == .attention ? Color.theme(light: 0xF4E7CF, dark: 0x51442F) : Color.theme(light: 0xDCEDE2, dark: 0x2E403A), in: .circle)
+                            .background(event.status == .attention ? Color.dynamic(light: 0xF4E7CF, dark: 0x51442F) : Color.dynamic(light: 0xDCEDE2, dark: 0x2E403A), in: .circle)
                         Rectangle().fill(Color.panelInk.opacity(0.09)).frame(width: 1, height: 39)
                     }.allowsHitTesting(false)
                     VStack(alignment: .leading, spacing: 8) {
                         HStack(spacing: 7) {
-                            Text(event.agent.uppercased())
-                                .font(.system(size: 10, weight: .semibold, design: .monospaced)).tracking(1)
-                                .foregroundStyle(Color.theme(light: 0x46545B, dark: 0xC1C9CD))
+                            MonoLabel(event.agent, size: 10, tracking: 1)
+                                .foregroundStyle(Color.dynamic(light: 0x46545B, dark: 0xC1C9CD))
                                 .lineLimit(1)
                             if !event.project.isEmpty {
                                 Text("/ " + event.project).font(.system(size: 10, design: .monospaced))
@@ -83,13 +66,13 @@ private struct NotificationRow: View {
                             }
                         }.allowsHitTesting(false)
                         MessagePreview(text: event.title, size: 16,
-                            color: NSColor.theme(light: 0x222A2E, dark: 0xEEF1EC),
+                            color: BobukColors.ink,
                             lines: 2, characterLimit: 160, onOpenSource: onOpen)
                             .frame(maxWidth: .infinity, alignment: .leading)
                         HStack(spacing: 5) {
                             if !event.detail.isEmpty {
                                 MessagePreview(text: event.detail, size: 11,
-                                    color: NSColor.theme(light: 0x59666C, dark: 0xA4AFB3),
+                                    color: BobukColors.muted,
                                     lines: 1, characterLimit: 400, onOpenSource: onOpen)
                                 Text("·").allowsHitTesting(false)
                             }
@@ -109,16 +92,9 @@ private struct NotificationRow: View {
                 }
                 .onHover { hovered = $0 }
                 .help("\(sourceAction) · \(MessageText.plain(event.title)) · \(event.date.formatted(date: .abbreviated, time: .shortened))")
-            Button(action: onDismiss) {
-                Image(systemName: "xmark").font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(dismissHovered ? Color.panelInk : muted)
-                    .frame(width: 24, height: 24)
-                    .background(Color.panelInk.opacity(dismissHovered ? 0.14 : 0.035), in: .rect(cornerRadius: 5))
-                    .contentShape(.rect)
-            }.buttonStyle(.plain).padding(.top, 22)
-                .onHover { dismissHovered = $0 }
-                .help("Dismiss notification")
-                .accessibilityLabel("Dismiss \(event.agent): \(MessageText.plain(event.title, limit: 160))")
+            GlyphButton(.close, label: "Dismiss \(event.agent): \(MessageText.plain(event.title, limit: 160))",
+                        help: "Dismiss notification", palette: palette, size: 24, action: onDismiss)
+                .padding(.top, 22)
         }.padding(.horizontal, 4)
             .background(Color.panelInk.opacity(selected ? 0.09 : hovered ? 0.025 : 0), in: .rect(cornerRadius: 6))
             .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.panelInk.opacity(selected ? 0.17 : 0)))
@@ -174,20 +150,13 @@ struct InboxList<Content: View>: View {
         if model.items.isEmpty { return "We'll let you know when an agent needs you." }
         return "\(model.attention.count) \(model.attention.count == 1 ? "needs" : "need") attention · \(model.completed.count) completed"
     }
-    private var pickerPalette: PickerPalette {
-        PickerPalette(surface: NSColor.theme(light: 0xF7F8F5, dark: 0x222A2E),
-                      text: NSColor(Color.panelInk), secondary: NSColor(Color.panelMuted),
-                      accent: NSColor(Color.panelAccent),
-                      border: NSColor.theme(light: contrast == .increased ? 0x46545B : 0xB3BEC1,
-                                            dark: contrast == .increased ? 0xA0B0B4 : 0x526064),
-                      badgeInk: .textColor)
-    }
+    private var pickerPalette: PickerPalette { .splash(increasedContrast: contrast == .increased) }
     private func group(_ label: String, items: [AgentEvent], color: Color) -> some View {
         VStack(alignment: .leading, spacing: 15) {
             HStack(spacing: 10) {
-                Text(label).font(.system(size: 9, weight: .semibold, design: .monospaced)).tracking(1.5)
+                MonoLabel(label, size: 9)
                 Rectangle().fill(color.opacity(0.2)).frame(height: 1)
-                Text(String(format: "%02d", items.count)).font(.system(size: 10, design: .monospaced))
+                MonoLabel(String(format: "%02d", items.count), weight: .regular, tracking: 0)
             }.foregroundStyle(color).padding(.horizontal, 4)
             VStack(spacing: 10) {
                 ForEach(items, id: \.key) { event in
@@ -197,7 +166,7 @@ struct InboxList<Content: View>: View {
                                        error: model.questionErrors[id]).id(event.key)
                     } else {
                         NotificationRow(event: event, onOpen: { onOpen(event) }, onDismiss: { model.dismiss(event) },
-                                        selected: model.selectedKey == event.key).id(event.key)
+                                        selected: model.selectedKey == event.key, palette: pickerPalette).id(event.key)
                     }
                 }
             }
@@ -208,12 +177,12 @@ struct InboxList<Content: View>: View {
             HStack {
                 HStack(spacing: 9) {
                     FinishMark().scaleEffect(0.8).frame(width: 20)
-                    Text("SPLASH FINISH").font(.system(size: 11, weight: .semibold, design: .monospaced)).tracking(2)
+                    MonoLabel("Splash Finish", size: 11, tracking: 2)
                 }
                 Spacer()
                 Circle().fill(Color.panelAccent).frame(width: 5, height: 5)
-                Text(String(format: "%02d / INBOX", model.items.count))
-                    .font(.system(size: 10, design: .monospaced)).tracking(1).foregroundStyle(muted)
+                MonoLabel(String(format: "%02d / inbox", model.items.count), weight: .regular, tracking: 1)
+                    .foregroundStyle(muted)
             }
             Text(headline)
                 .font(.system(size: 27, weight: .medium)).tracking(-0.7).padding(.top, 18)
@@ -238,15 +207,13 @@ struct InboxList<Content: View>: View {
                         Image(systemName: "moon.zzz")
                         Text("Snooze")
                         Text("15m").foregroundStyle(muted).padding(.leading, 3)
-                    }.font(.system(size: 12, weight: .medium)).padding(.horizontal, 13).frame(height: 33)
-                }.buttonStyle(QuietButtonStyle()).disabled(model.items.isEmpty)
+                    }
+                }.buttonStyle(QuietButtonStyle(palette: pickerPalette, height: 33)).disabled(model.items.isEmpty)
                     .keyboardShortcut(.cancelAction)
                     .help("Hide for 15 minutes or until the next new event · Esc")
                 Spacer()
-                Button(action: model.clear) {
-                    Text("Clear all").font(.system(size: 12, weight: .medium))
-                        .padding(.horizontal, 12).frame(height: 33)
-                }.buttonStyle(QuietButtonStyle()).keyboardShortcut("w", modifiers: .command)
+                Button("Clear all", action: model.clear)
+                    .buttonStyle(QuietButtonStyle(palette: pickerPalette, height: 33)).keyboardShortcut("w", modifiers: .command)
                     .help("Clear notifications; pending questions remain · Backspace or ⌘W")
             }.padding(.top, 17)
             if let message = model.message {
@@ -256,7 +223,7 @@ struct InboxList<Content: View>: View {
                 ShortcutFooter(footerHints, palette: pickerPalette).padding(.top, 13)
             }
         }.padding(25).frame(width: 470)
-            .foregroundStyle(Color.theme(light: 0x222A2E, dark: 0xE9EEE9))
+            .foregroundStyle(Color.dynamic(light: 0x222A2E, dark: 0xE9EEE9))
             .pickerPanel(palette: pickerPalette)
             .fixedSize(horizontal: true, vertical: true)
             .background(GeometryReader { proxy in

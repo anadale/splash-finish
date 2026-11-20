@@ -1,3 +1,4 @@
+import BobukCore
 import Foundation
 
 public enum AgentKind: String, CaseIterable, Sendable {
@@ -76,7 +77,7 @@ public struct IntegrationInstaller {
         root(agent).appendingPathComponent(agent == .claude ? "settings.json" : "hooks.json")
     }
     private func readObject(_ url: URL) throws -> [String: Any] {
-        try SafeFiles.check(url)
+        try SafeFile.check(url)
         guard FileManager.default.fileExists(atPath: url.path) else { return [:] }
         let data = try Data(contentsOf: url)
         guard data.count < 4_000_000, let value = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
@@ -130,10 +131,10 @@ public struct IntegrationInstaller {
         guard (try? Data(contentsOf: url)) == before else { throw EventError.invalid("Configuration changed while installing: \(url.path); retry") }
         if let before {
             let backup = url.appendingPathExtension("splash-finish-backup-" + UUID().uuidString)
-            try SafeFiles.write(before, to: backup)
+            try SafeFile.write(before, to: backup)
             pruneBackups(of: url, keeping: 3)
         }
-        try SafeFiles.write(after, to: url)
+        try SafeFile.write(after, to: url)
     }
     /// Every config edit creates a backup; keep only the newest few so the agent
     /// configuration directory does not accumulate files forever.
@@ -168,7 +169,7 @@ public struct IntegrationInstaller {
                 Data(template.replacingOccurrences(of: "__EXECUTABLE_JSON__", with: encoded).utf8))
     }
     private func checkOwnership(_ url: URL) throws {
-        try SafeFiles.check(url)
+        try SafeFile.check(url)
         if FileManager.default.fileExists(atPath: url.path) {
             guard let text = try? String(contentsOf: url, encoding: .utf8), text.contains(fileMarker) else {
                 throw EventError.invalid("Refusing to overwrite an unmanaged file: \(url.path)")
@@ -253,9 +254,8 @@ public struct IntegrationInstaller {
         return IntegrationStatus(agent: agent, state: .installed, detail: detail, lastEvent: lastEvent, richQuestionsEnabled: richEnabled, piAskDetected: piAsk)
     }
     public func run(install: Bool, agents: [AgentKind], richQuestions: Bool? = nil) throws -> [String] {
-        let lockRoot = environment["SPLASH_FINISH_HOME"].map { URL(fileURLWithPath: $0, isDirectory: true) }
-            ?? home.appendingPathComponent("Library/Application Support/Splash Finish")
-        let lock = try FileLock(url: lockRoot.appendingPathComponent("skills.lock"))
+        let lock = try FileLock(url: AppPaths.splashFinish(environment: environment, home: home).file("skills.lock"),
+                                busyMessage: Splash.busyMessage)
         return try withExtendedLifetime(lock) {
             // Preserve explicitly enabled project-local integrations on CLI reinstall.
             let existingRich = try agents.contains(.pi) && FileManager.default.fileExists(atPath: richPiFile().0.path)
@@ -280,7 +280,7 @@ public struct IntegrationInstaller {
                         let optional = try richPiFile().0
                         if FileManager.default.fileExists(atPath: optional.path) { try FileManager.default.removeItem(at: optional) }
                     }
-                    for (url, data) in files { try SafeFiles.write(data, to: url) }
+                    for (url, data) in files { try SafeFile.write(data, to: url) }
                     if agent != .pi { try patch(agent, install: true) }
                 } else {
                     if agent != .pi { try patch(agent, install: false) }

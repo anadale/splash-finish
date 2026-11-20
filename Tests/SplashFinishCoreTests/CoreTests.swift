@@ -1,3 +1,4 @@
+import BobukCore
 import XCTest
 @testable import SplashFinishCore
 
@@ -215,7 +216,7 @@ final class FilesAndInstallerTests: XCTestCase {
     func testInstallIsIdempotentAndUninstallPreservesOtherSettings() throws {
         let url = home.appendingPathComponent(".claude/settings.json")
         let original: [String: Any] = ["model": "keep-me", "hooks": ["Stop": [["matcher": "", "hooks": [["type": "command", "command": "echo existing"]]]]]]
-        try SafeFiles.write(JSONSerialization.data(withJSONObject: original), to: url)
+        try SafeFile.write(JSONSerialization.data(withJSONObject: original), to: url)
         _ = try installer.run(install: true, agents: AgentKind.allCases)
         let first = try Data(contentsOf: url)
         _ = try installer.run(install: true, agents: AgentKind.allCases)
@@ -234,7 +235,7 @@ final class FilesAndInstallerTests: XCTestCase {
     func testInstalledHooksHonorWorkerOptOut() throws {
         let executable = home.appendingPathComponent("worker's app")
         let log = home.appendingPathComponent("hook-calls.txt")
-        try SafeFiles.write(Data("#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$HOOK_TEST_LOG\"\n".utf8), to: executable)
+        try SafeFile.write(Data("#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$HOOK_TEST_LOG\"\n".utf8), to: executable)
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
         let guarded = IntegrationInstaller(home: home, environment: [:], executable: executable.path, resources: resources)
         _ = try guarded.run(install: true, agents: [.claude, .codex])
@@ -262,14 +263,14 @@ final class FilesAndInstallerTests: XCTestCase {
         XCTAssertFalse(installer.piAgentAskDetected())
         let settings = home.appendingPathComponent(".pi/agent/settings.json")
         let package = home.appendingPathComponent(".pi/agent/npm/node_modules/pi-agent-ask/package.json")
-        try SafeFiles.write(Data("{\"packages\":[\"npm:pi-agent-ask\"]}".utf8), to: settings)
+        try SafeFile.write(Data("{\"packages\":[\"npm:pi-agent-ask\"]}".utf8), to: settings)
         XCTAssertFalse(installer.piAgentAskDetected(), "A configured but missing package is not installed")
-        try SafeFiles.write(Data("{\"name\":\"pi-agent-ask\",\"version\":\"2.0.2\"}".utf8), to: package)
+        try SafeFile.write(Data("{\"name\":\"pi-agent-ask\",\"version\":\"2.0.2\"}".utf8), to: package)
         XCTAssertTrue(installer.piAgentAskDetected())
         XCTAssertTrue(installer.inspect(inbox: Inbox()).last!.piAskDetected)
         XCTAssertTrue(try installer.run(install: true, agents: [.pi]).joined().contains("rich questions enabled"))
         XCTAssertTrue(installer.inspect(inbox: Inbox()).last!.richQuestionsEnabled)
-        try SafeFiles.write(Data("{\"packages\":[{\"source\":\"npm:pi-agent-ask\",\"extensions\":[]}]}".utf8), to: settings)
+        try SafeFile.write(Data("{\"packages\":[{\"source\":\"npm:pi-agent-ask\",\"extensions\":[]}]}".utf8), to: settings)
         XCTAssertFalse(installer.piAgentAskDetected(), "A disabled extension must not be offered as available")
         XCTAssertTrue(try installer.run(install: true, agents: [.pi]).joined().contains("pi install npm:pi-agent-ask"))
     }
@@ -292,7 +293,7 @@ final class FilesAndInstallerTests: XCTestCase {
     }
     func testRichPiFileOwnershipIsProtected() throws {
         let file = home.appendingPathComponent(".pi/agent/extensions/splash-finish-questions.ts")
-        try SafeFiles.write(Data("user-owned extension".utf8), to: file)
+        try SafeFile.write(Data("user-owned extension".utf8), to: file)
         XCTAssertThrowsError(try installer.run(install: true, agents: [.pi]))
         XCTAssertThrowsError(try installer.run(install: false, agents: [.pi]))
         XCTAssertEqual(try String(contentsOf: file, encoding: .utf8), "user-owned extension")
@@ -319,7 +320,7 @@ final class FilesAndInstallerTests: XCTestCase {
             var hooks = config["hooks"] as! [String: Any]
             hooks.removeValue(forKey: "SessionEnd") // A required event; patch re-adds it and must back up first.
             config["hooks"] = hooks
-            try SafeFiles.write(JSONSerialization.data(withJSONObject: config), to: url)
+            try SafeFile.write(JSONSerialization.data(withJSONObject: config), to: url)
             _ = try installer.run(install: true, agents: [.codex])
         }
         let backups = try FileManager.default.contentsOfDirectory(atPath: home.appendingPathComponent(".codex").path)
@@ -328,9 +329,9 @@ final class FilesAndInstallerTests: XCTestCase {
     }
     func testFocusStatusReadsAssertionsDatabase() throws {
         let database = home.appendingPathComponent("Library/DoNotDisturb/DB/Assertions.json")
-        try SafeFiles.write(Data(#"{"data":[{}]}"#.utf8), to: database)
+        try SafeFile.write(Data(#"{"data":[{}]}"#.utf8), to: database)
         XCTAssertFalse(FocusStatus.isDoNotDisturbActive(home: home))
-        try SafeFiles.write(Data(#"{"data":[{"storeAssertionRecords":[{"assertionDetails":{}}]}]}"#.utf8), to: database)
+        try SafeFile.write(Data(#"{"data":[{"storeAssertionRecords":[{"assertionDetails":{}}]}]}"#.utf8), to: database)
         XCTAssertTrue(FocusStatus.isDoNotDisturbActive(home: home))
         try FileManager.default.removeItem(at: database)
         XCTAssertFalse(FocusStatus.isDoNotDisturbActive(home: home))
@@ -338,32 +339,49 @@ final class FilesAndInstallerTests: XCTestCase {
     func testInvalidConfigPreflightDoesNotWriteOtherFiles() throws {
         let url = home.appendingPathComponent(".codex/hooks.json")
         let bad = Data("{\"hooks\":{\"Stop\":\"invalid\"}}".utf8)
-        try SafeFiles.write(bad, to: url)
+        try SafeFile.write(bad, to: url)
         XCTAssertThrowsError(try installer.run(install: true, agents: AgentKind.allCases))
         XCTAssertEqual(try Data(contentsOf: url), bad)
         XCTAssertFalse(FileManager.default.fileExists(atPath: home.appendingPathComponent(".claude/settings.json").path))
     }
     func testUnmanagedFileAndSymlinkRefused() throws {
         let skill = home.appendingPathComponent(".pi/agent/skills/splash-finish/SKILL.md")
-        try SafeFiles.write(Data("My own skill".utf8), to: skill)
+        try SafeFile.write(Data("My own skill".utf8), to: skill)
         XCTAssertThrowsError(try installer.run(install: true, agents: [.pi]))
         XCTAssertEqual(try String(contentsOf: skill), "My own skill")
         let link = home.appendingPathComponent("link")
         try FileManager.default.createSymbolicLink(at: link, withDestinationURL: home.appendingPathComponent("absent"))
-        XCTAssertThrowsError(try SafeFiles.write(Data(), to: link))
-        XCTAssertThrowsError(try SafeFiles.write(Data(), to: link.appendingPathComponent("child.json")))
+        XCTAssertThrowsError(try SafeFile.write(Data(), to: link))
+        XCTAssertThrowsError(try SafeFile.write(Data(), to: link.appendingPathComponent("child.json")))
     }
     func testMixedGroupsKeepUnrelatedHandlers() throws {
         let url = home.appendingPathComponent(".codex/hooks.json")
         let original: [String: Any] = ["description": "keep", "hooks": ["Stop": [["custom": "metadata", "hooks": [
             ["type": "command", "command": "'old' hook codex --managed-splash-finish"],
             ["type": "command", "command": "echo user-hook"]]]]]]
-        try SafeFiles.write(JSONSerialization.data(withJSONObject: original), to: url)
+        try SafeFile.write(JSONSerialization.data(withJSONObject: original), to: url)
         _ = try installer.run(install: false, agents: [.codex])
         let result = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as! [String: Any]
         let hooks = result["hooks"] as! [String: [[String: Any]]]
         XCTAssertEqual(hooks["Stop"]?.first?["custom"] as? String, "metadata")
         XCTAssertEqual((hooks["Stop"]?.first?["hooks"] as? [[String: Any]])?.count, 1)
         XCTAssertEqual(result["description"] as? String, "keep")
+    }
+}
+
+/// `SPLASH_FINISH_HOME` names a folder that holds every file; hooks and the Python tests rely on it.
+final class SplashPathsTests: XCTestCase {
+    func testPathsMatchEarlierVersions() {
+        let home = URL(fileURLWithPath: "/Users/someone", isDirectory: true)
+        let installed = AppPaths.splashFinish(environment: [:], home: home)
+        XCTAssertEqual(installed.support.path, "/Users/someone/Library/Application Support/Splash Finish")
+        XCTAssertEqual(installed.state.path, "/Users/someone/Library/Application Support/Splash Finish/state.json")
+        XCTAssertEqual(installed.file("app.lock").path, "/Users/someone/Library/Application Support/Splash Finish/app.lock")
+        for value in ["/tmp/splash-home", "/tmp/splash-home/"] {
+            let isolated = AppPaths.splashFinish(environment: ["SPLASH_FINISH_HOME": value], home: home)
+            XCTAssertEqual(isolated.support.path, "/tmp/splash-home")
+            XCTAssertEqual(isolated.state.path, "/tmp/splash-home/state.json")
+            XCTAssertEqual(isolated.file("skills.lock").path, "/tmp/splash-home/skills.lock")
+        }
     }
 }

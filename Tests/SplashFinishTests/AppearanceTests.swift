@@ -1,22 +1,35 @@
 import AppKit
 import XCTest
+import BobukUI
 @testable import SplashFinish
 
 final class AppearanceTests: XCTestCase {
-    func testPaletteResolvesForBothThemes() throws {
-        let color = NSColor.theme(light: 0x222A2E, dark: 0xEEF1EC)
-        for (name, red) in [(NSAppearance.Name.aqua, 0x22), (.darkAqua, 0xEE)] {
-            let appearance = try XCTUnwrap(NSAppearance(named: name))
-            appearance.performAsCurrentDrawingAppearance {
-                let resolved = color.usingColorSpace(.sRGB)
-                XCTAssertEqual(resolved?.redComponent ?? -1, Double(red) / 255, accuracy: 0.001)
-            }
+    private func red(of color: NSColor, in name: NSAppearance.Name) throws -> Double {
+        var red = -1.0
+        try XCTUnwrap(NSAppearance(named: name)).performAsCurrentDrawingAppearance {
+            red = Double(color.usingColorSpace(.sRGB)?.redComponent ?? -1)
         }
+        return red
     }
 
-    func testThemeValuesAreStableForSavedPreferences() {
-        XCTAssertEqual(AppTheme.light.rawValue, "light")
-        XCTAssertEqual(AppTheme.dark.rawValue, "dark")
-        XCTAssertNil(AppTheme(rawValue: "invalid"))
+    func testSplashInkStaysWhiteInTheDarkTheme() throws {
+        XCTAssertEqual(try red(of: .panelInk, in: .aqua), Double(0x22) / 255, accuracy: 0.001)
+        XCTAssertEqual(try red(of: .panelInk, in: .darkAqua), 1, accuracy: 0.001)
+        let palette = PickerPalette.splash(increasedContrast: true)
+        XCTAssertEqual(try red(of: palette.border, in: .darkAqua), Double(0xA0) / 255, accuracy: 0.001)
+    }
+
+    func testSavedThemeKeepsKeyValuesAndTheDarkDefault() throws {
+        let suite = "io.bobuk.splash-finish.tests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        func stored() -> AppearanceChoice { .stored(in: defaults, key: AppearanceChoice.defaultsKey, fallback: .dark) }
+        XCTAssertEqual(AppearanceChoice.defaultsKey, "appTheme")
+        XCTAssertEqual(stored(), .dark)
+        defaults.set("light", forKey: "appTheme")
+        XCTAssertEqual(stored(), .light)
+        defaults.set("invalid", forKey: "appTheme")
+        XCTAssertEqual(stored(), .dark)
+        XCTAssertEqual(AppearanceChoice.offered.map(\.rawValue), ["light", "dark"])
     }
 }

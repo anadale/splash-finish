@@ -1,0 +1,5 @@
+    <key>CFBundleURLTypes</key><array><dict>
+        <key>CFBundleURLName</key><string>@BUNDLE_ID@.events</string>
+        <key>CFBundleURLSchemes</key><array><string>splash-finish</string></array>
+        <key>CFBundleTypeRole</key><string>Viewer</string>
+    </dict></array>

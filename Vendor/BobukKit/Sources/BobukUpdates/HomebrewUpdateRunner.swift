@@ -1,16 +1,17 @@
-// Runs the one Homebrew command that updates SplashFinish and reports its live output and true result.
+// Runs the one Homebrew command that updates the app and reports its live output and true result.
+// From Ting and Splash Finish; the names of the app are parameters (`AppUpdateIdentity`).
+import BobukCore
 import Foundation
-import SplashFinishCore
 
-/// Design: brew replaces Splash Finish.app while it runs, and the running SplashFinish may be stopped or crash on
-/// its replaced files. So SplashFinish does not own the brew process through a pipe. A small detached
+/// Design: brew replaces <App>.app while it runs, and the running app may be stopped or crash on
+/// its replaced files. So the app does not own the brew process through a pipe. A small detached
 /// helper script runs brew with its output in a log file and its exit code in a status file of a
-/// run folder; any SplashFinish only reads those files. The helper ignores SIGHUP and outlives SplashFinish.
+/// run folder; any copy only reads those files. The helper ignores SIGHUP and outlives the app.
 ///
-/// The window must stay visible while brew works, also in the moments when no installed Splash Finish.app
+/// The window must stay visible while brew works, also in the moments when no installed <App>.app
 /// exists (brew removed the old one and has not placed the new one, or placing it failed). So
-/// before brew starts, SplashFinish copies its own bundle into the run folder (an APFS clone, cheap). The
-/// helper watches the process whose pid is in the run folder; when that Splash Finish is gone while brew
+/// before brew starts, the app copies its own bundle into the run folder (an APFS clone, cheap). The
+/// helper watches the process whose pid is in the run folder; when that copy is gone while brew
 /// still runs, it starts that copy with `--homebrew-update-viewer <run folder>`: a process that
 /// shows only the progress window (`HomebrewUpdateViewer`), with the rest of the live output and
 /// the result, independent of what brew does to the installed bundle.
@@ -19,37 +20,38 @@ import SplashFinishCore
 /// restart, or nobody is there to show it, the helper starts the installed copy with
 /// `--homebrew-update-log <run folder>`, which shows the result once more (role `.final`, which
 /// never asks for another restart). "Installed copy" is looked up after brew: the newest
-/// `Caskroom/splash-finish/<version>/Splash Finish.app`, resolved, because an upgrade removes the old version folder;
+/// `Caskroom/<cask>/<version>/<App>.app`, resolved, because an upgrade removes the old version folder;
 /// the old place only when no record is left. With no installed copy at all, the viewer shows the
 /// result unless someone has already seen it.
 /// Who shows a run, given explicitly by how the process was started.
-enum HomebrewUpdateRole: Equatable {
-    /// The SplashFinish that started the update from its menu.
+public enum HomebrewUpdateRole: Equatable, Sendable {
+    /// The copy that started the update from its menu.
     case owner
-    /// The copy in the run folder that the helper started while the installed Splash Finish was gone.
+    /// The copy in the run folder that the helper started while the installed app was gone.
     case viewer
-    /// The installed SplashFinish that the helper started after brew to show the result.
+    /// The installed app that the helper started after brew to show the result.
     case final
 
-    /// Whether this process should quit so that the helper starts the installed SplashFinish. The owner
+    /// Whether this process should quit so that the helper starts the installed app. The owner
     /// and the viewer may run old or removed code after a success; the final copy is the new one.
-    /// After a failure the viewer also hands over, so that Splash Finish is back once its window is closed.
-    func restarts(after outcome: HomebrewUpdateOutcome) -> Bool {
+    /// After a failure the viewer also hands over, so that the app is back once its window is closed.
+    public func restarts(after outcome: HomebrewUpdateOutcome) -> Bool {
         switch self {
         case .owner, .viewer: outcome == .upgraded
         case .final: false
         }
     }
 
-    func relaunchWhenDone(after outcome: HomebrewUpdateOutcome) -> Bool {
+    public func relaunchWhenDone(after outcome: HomebrewUpdateOutcome) -> Bool {
         self == .viewer || restarts(after: outcome)
     }
 }
 
 @MainActor
-final class HomebrewUpdateRunner {
+public final class HomebrewUpdateRunner {
     /// Nil for a copy that only watches a run that another copy started.
-    let install: HomebrewInstall?
+    public let install: HomebrewInstall?
+    public let app: AppUpdateIdentity
     private let appPID: pid_t
     private let base: URL
     private let opener: URL
@@ -63,37 +65,34 @@ final class HomebrewUpdateRunner {
     private var onFinish: ((HomebrewUpdateOutcome) -> Void)?
     private var lastOutput = ""
     /// The run folder of the current or last run.
-    private(set) var directory: URL?
+    public private(set) var directory: URL?
 
-    init(install: HomebrewInstall?, appPID: pid_t = ProcessInfo.processInfo.processIdentifier,
-         base: URL = HomebrewUpdateRunner.defaultBase,
-         opener: URL = URL(fileURLWithPath: "/usr/bin/open"),
-         shell: URL = URL(fileURLWithPath: "/bin/sh"),
-         viewerSource: URL? = AppBundle.applicationURL(for: AppBundle.executableURL),
-         pollInterval: TimeInterval = 0.25) {
+    public init(app: AppUpdateIdentity, install: HomebrewInstall?,
+                appPID: pid_t = ProcessInfo.processInfo.processIdentifier,
+                base: URL? = nil,
+                opener: URL = URL(fileURLWithPath: "/usr/bin/open"),
+                shell: URL = URL(fileURLWithPath: "/bin/sh"),
+                viewerSource: URL? = AppBundle.applicationURL,
+                pollInterval: TimeInterval = 0.25) {
+        self.app = app
         self.install = install
         self.appPID = appPID
-        self.base = base
+        self.base = base ?? app.runBase
         self.opener = opener
         self.shell = shell
         self.viewerSource = viewerSource
         self.pollInterval = pollInterval
     }
 
-    /// Per-user temporary folder; it survives the restart of SplashFinish but holds no configuration.
-    nonisolated static var defaultBase: URL {
-        FileManager.default.temporaryDirectory.appendingPathComponent("io.bobuk.splash-finish.homebrew-update")
-    }
-
-    var isRunning: Bool { timer != nil }
+    public var isRunning: Bool { timer != nil }
 
     /// Starts the update. Returns false, and starts nothing, while another run is in progress.
     /// A run that cannot start finishes at once with `.failed` and the reason as its output.
     @discardableResult
-    func start(onOutput: @escaping (String) -> Void, onFinish: @escaping (HomebrewUpdateOutcome) -> Void) -> Bool {
+    public func start(onOutput: @escaping (String) -> Void, onFinish: @escaping (HomebrewUpdateOutcome) -> Void) -> Bool {
         guard !isRunning else { return false }
         guard let install else {
-            onFinish(.failed(exitCode: -1, output: "Homebrew does not manage this copy of Splash Finish."))
+            onFinish(.failed(exitCode: -1, output: "Homebrew does not manage this copy of \(app.displayName)."))
             return true
         }
         let fm = FileManager.default
@@ -111,10 +110,10 @@ final class HomebrewUpdateRunner {
             onFinish(.failed(exitCode: -1, output: "Could not prepare the update in \(folder.path): \(error.localizedDescription)"))
             return true
         }
-        // The progress viewer for the time without an installed SplashFinish. It is required: without a
-        // complete copy nothing could show the progress while brew replaces SplashFinish, so brew never starts.
+        // The progress viewer for the time without an installed app. It is required: without a
+        // complete copy nothing could show the progress while brew replaces the app, so brew never starts.
         do {
-            try Self.prepareViewer(from: viewerSource, in: folder)
+            try Self.prepareViewer(from: viewerSource, in: folder, app: app)
         } catch {
             onFinish(.failed(exitCode: -1, output: "Could not prepare the progress window in \(folder.path): \(error.localizedDescription)"))
             return true
@@ -122,11 +121,11 @@ final class HomebrewUpdateRunner {
         Self.removeOldRuns(in: base, keeping: folder)
         let process = Process()
         process.executableURL = shell
-        process.arguments = [script.path, folder.path, install.app.path,
-                             install.prefix.appendingPathComponent("Caskroom/\(HomebrewDetection.cask)").path,
-                             opener.path, install.brew.path] + HomebrewUpdate.arguments
+        process.arguments = [script.path, folder.path, install.app.path, install.caskroom.path,
+                             opener.path, app.cask.appBundleName, app.executableName,
+                             install.brew.path] + HomebrewUpdate.arguments(for: install.cask)
         var environment = ProcessInfo.processInfo.environment
-        // A SplashFinish started by Finder or at login has a minimal PATH; brew needs its own prefix.
+        // An app started by Finder or at login has a minimal PATH; brew needs its own prefix.
         let prefix = install.prefix.path
         environment["PATH"] = "\(prefix)/bin:\(prefix)/sbin:/usr/bin:/bin:/usr/sbin:/sbin"
         process.environment = environment
@@ -145,10 +144,10 @@ final class HomebrewUpdateRunner {
         return true
     }
 
-    /// Shows a run that another copy of Splash Finish started (`--homebrew-update-log`): this process takes
+    /// Shows a run that another copy of the app started (`--homebrew-update-log`): this process takes
     /// over as the one the helper waits for. Returns false while a run is in progress here.
     @discardableResult
-    func watch(_ folder: URL, onOutput: @escaping (String) -> Void,
+    public func watch(_ folder: URL, onOutput: @escaping (String) -> Void,
                onFinish: @escaping (HomebrewUpdateOutcome) -> Void) -> Bool {
         guard !isRunning else { return false }
         try? String(appPID).write(to: folder.appendingPathComponent("pid"), atomically: false, encoding: .utf8)
@@ -172,7 +171,7 @@ final class HomebrewUpdateRunner {
 
     /// Stops brew. The result is a cancel, never a success. A watching copy has no helper of its
     /// own; it asks the helper through the run folder.
-    func cancel() {
+    public func cancel() {
         guard isRunning, let directory else { return }
         if let helper, helper.isRunning {
             helper.terminate()
@@ -182,39 +181,39 @@ final class HomebrewUpdateRunner {
     }
 
     /// Acknowledges the result for `role`. Returns true when this process should quit now so
-    /// that the helper starts the installed SplashFinish.
+    /// that the helper starts the installed app.
     @discardableResult
-    func conclude(_ outcome: HomebrewUpdateOutcome, role: HomebrewUpdateRole) -> Bool {
+    public func conclude(_ outcome: HomebrewUpdateOutcome, role: HomebrewUpdateRole) -> Bool {
         acknowledge(relaunch: role.relaunchWhenDone(after: outcome))
         return role.restarts(after: outcome)
     }
 
-    enum ViewerError: LocalizedError {
+    public enum ViewerError: LocalizedError {
         case noBundle
         case incomplete(String)
-        var errorDescription: String? {
+        public var errorDescription: String? {
             switch self {
-            case .noBundle: "this Splash Finish is not running from an app bundle that can be copied."
+            case .noBundle: "this copy is not running from an app bundle that can be copied."
             case .incomplete(let path): "the copy has no executable at \(path)."
             }
         }
     }
 
-    /// Copies `source` (Splash Finish.app) to `<run folder>/viewer/Splash Finish.app` and checks that its executable
+    /// Copies `source` (<App>.app) to `<run folder>/viewer/<App>.app` and checks that its executable
     /// is there, the one the helper starts.
-    static func prepareViewer(from source: URL?, in folder: URL) throws {
+    public static func prepareViewer(from source: URL?, in folder: URL, app: AppUpdateIdentity) throws {
         guard let source else { throw ViewerError.noBundle }
         let fm = FileManager.default
         let viewer = folder.appendingPathComponent("viewer")
         try fm.createDirectory(at: viewer, withIntermediateDirectories: true)
-        let copy = viewer.appendingPathComponent("Splash Finish.app")
+        let copy = viewer.appendingPathComponent(app.cask.appBundleName)
         try fm.copyItem(at: source, to: copy)
-        let executable = copy.appendingPathComponent("Contents/MacOS/SplashFinish")
+        let executable = copy.appendingPathComponent("Contents/MacOS").appendingPathComponent(app.executableName)
         guard fm.isExecutableFile(atPath: executable.path) else { throw ViewerError.incomplete(executable.path) }
     }
 
     /// Run folders of earlier updates, older than a day, with their viewer copies.
-    static func removeOldRuns(in base: URL, keeping current: URL) {
+    public static func removeOldRuns(in base: URL, keeping current: URL) {
         let fm = FileManager.default
         let limit = Date().addingTimeInterval(-86_400)
         for folder in (try? fm.contentsOfDirectory(at: base, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
@@ -224,9 +223,9 @@ final class HomebrewUpdateRunner {
         }
     }
 
-    /// Tells the helper that SplashFinish has seen the result; with `relaunch` the helper starts the
+    /// Tells the helper that the app has seen the result; with `relaunch` the helper starts the
     /// installed copy again as soon as this process has quit.
-    func acknowledge(relaunch: Bool) {
+    public func acknowledge(relaunch: Bool) {
         guard let directory else { return }
         // Plain writes: the helper only checks that the markers exist.
         if relaunch { try? Data().write(to: directory.appendingPathComponent("relaunch")) }
@@ -250,32 +249,33 @@ final class HomebrewUpdateRunner {
         finish?(outcome)
     }
 
-    static func output(in directory: URL) -> String {
+    public static func output(in directory: URL) -> String {
         guard let data = try? Data(contentsOf: directory.appendingPathComponent("output.log")) else { return "" }
         return String(decoding: data, as: UTF8.self)
     }
 
     /// The result once the helper wrote the exit code of brew; nil while brew runs.
-    static func outcome(in directory: URL) -> HomebrewUpdateOutcome? {
+    public static func outcome(in directory: URL) -> HomebrewUpdateOutcome? {
         guard let text = try? String(contentsOf: directory.appendingPathComponent("status"), encoding: .utf8),
               let code = Int32(text.trimmingCharacters(in: .whitespacesAndNewlines)) else { return nil }
         let cancelled = FileManager.default.fileExists(atPath: directory.appendingPathComponent("cancelled").path)
         return HomebrewUpdate.outcome(exitCode: code, output: output(in: directory), cancelled: cancelled)
     }
 
-    /// Arguments: run folder, installed app, Caskroom folder of the cask, opener, then brew and its
-    /// arguments. The command itself comes from `HomebrewUpdate.arguments`, never from this text.
-    /// The pid of the SplashFinish that shows the window is in `<run folder>/pid`.
-    static let helperScript = #"""
+    /// Arguments: run folder, installed app, Caskroom folder of the cask, opener, bundle name,
+    /// executable name, then brew and its arguments. The command itself comes from
+    /// `HomebrewUpdate.arguments(for:)`, never from this text. The pid of the copy that shows the
+    /// window is in `<run folder>/pid`. Names are arguments, so spaces ("Splash Finish.app") are safe.
+    public static let helperScript = #"""
     #!/bin/sh
-    dir=$1; app=$2; caskroom=$3; opener=$4; shift 4
-    viewer="$dir/viewer/Splash Finish.app/Contents/MacOS/SplashFinish"
+    dir=$1; app=$2; caskroom=$3; opener=$4; bundle=$5; executable=$6; shift 6
+    viewer="$dir/viewer/$bundle/Contents/MacOS/$executable"
     trap '' HUP
     alive() { p=$(cat "$dir/pid" 2>/dev/null); [ -n "$p" ] && kill -0 "$p" 2>/dev/null; }
     target() {
       found=""
       for v in $(ls "$caskroom" 2>/dev/null | sort -V); do
-        r="$caskroom/$v/Splash Finish.app"
+        r="$caskroom/$v/$bundle"
         [ -d "$r" ] && found=$(cd -P "$r" 2>/dev/null && pwd -P)
       done
       [ -z "$found" ] && [ -d "$app" ] && found=$app

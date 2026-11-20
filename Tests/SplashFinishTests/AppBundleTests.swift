@@ -1,7 +1,9 @@
 import Foundation
 import XCTest
+import BobukCore
 @testable import SplashFinish
 
+/// The resource bundle name must match what SwiftPM builds and `package_app.sh` copies.
 final class AppBundleTests: XCTestCase {
     func testPackagedResourcesAndMissingBundle() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -9,10 +11,12 @@ final class AppBundleTests: XCTestCase {
         let app = root.appendingPathComponent("Splash Finish.app")
         let executable = app.appendingPathComponent("Contents/MacOS/SplashFinish")
         let resources = app.appendingPathComponent("Contents/Resources/SplashFinish_SplashFinish.bundle")
-        XCTAssertNil(AppBundle.resources(for: executable), "An installed app must never use the developer's build resources")
+        XCTAssertNil(AppBundle.resourceBundle(named: CLI.resourceBundleName, executable: executable),
+                     "An installed app must never use the developer's build resources")
         try FileManager.default.createDirectory(at: resources, withIntermediateDirectories: true)
         XCTAssertEqual(AppBundle.applicationURL(for: executable)?.path, app.path)
-        XCTAssertEqual(AppBundle.resources(for: executable)?.bundleURL.path, resources.path)
+        XCTAssertEqual(AppBundle.resourceBundle(named: CLI.resourceBundleName, executable: executable)?.bundleURL.path,
+                       resources.path)
     }
 
     func testSwiftPMResourcesBesideExecutable() throws {
@@ -22,6 +26,7 @@ final class AppBundleTests: XCTestCase {
         try FileManager.default.createDirectory(at: resources, withIntermediateDirectories: true)
         let executable = root.appendingPathComponent("SplashFinish")
         XCTAssertNil(AppBundle.applicationURL(for: executable))
-        XCTAssertEqual(AppBundle.resources(for: executable)?.bundleURL.path, resources.path)
+        XCTAssertEqual(AppBundle.resourceBundle(named: CLI.resourceBundleName, executable: executable)?.bundleURL.path,
+                       resources.path)
     }
 }

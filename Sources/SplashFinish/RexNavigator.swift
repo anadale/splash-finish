@@ -1,4 +1,5 @@
 import AppKit
+import BobukCore
 import Darwin
 import SplashFinishCore
 
@@ -86,44 +87,18 @@ import SplashFinishCore
     }
 
     private static func run(_ executable: URL, _ arguments: [String], completion: @escaping (Data?, String?) -> Void) {
-        DispatchQueue.global(qos: .userInitiated).async {
-            let process = Process(), pipe = Pipe()
-            process.executableURL = executable
-            process.arguments = ["--autostart=false", "--timeout", "3s"] + arguments
-            var environment = ProcessInfo.processInfo.environment
-            // Always use the default local server. Never use an inherited host,
-            // session, block, or client from the GUI launch environment.
-            for key in environment.keys.filter({ $0.hasPrefix("REX_") }) { environment.removeValue(forKey: key) }
-            process.environment = environment
-            process.standardOutput = pipe; process.standardError = pipe
-            do {
-                try process.run()
-                let timer = DispatchWorkItem {
-                    if process.isRunning { process.terminate() }
-                    DispatchQueue.global().asyncAfter(deadline: .now() + 0.3) {
-                        if process.isRunning { kill(process.processIdentifier, SIGKILL) }
-                    }
-                }
-                DispatchQueue.global().asyncAfter(deadline: .now() + 4, execute: timer)
-                defer { timer.cancel(); try? pipe.fileHandleForReading.close() }
-                var output = Data(), oversized = false
-                while let chunk = try pipe.fileHandleForReading.read(upToCount: 16384), !chunk.isEmpty {
-                    output.append(chunk)
-                    if output.count > 2_000_000 {
-                        oversized = true
-                        if process.isRunning { kill(process.processIdentifier, SIGKILL) }
-                        break
-                    }
-                }
-                process.waitUntilExit()
-                let ok = !oversized && process.terminationStatus == 0
-                let detail = AgentEvent.clean(String(decoding: output, as: UTF8.self), limit: 400)
-                let error = detail.isEmpty ? "Rex timed out or refused the request. Check that Rex is open and Remote Control is enabled." : detail
-                DispatchQueue.main.async { completion(ok ? output : nil, ok ? nil : error) }
-            } catch {
-                if process.isRunning { kill(process.processIdentifier, SIGKILL) }
-                DispatchQueue.main.async { completion(nil, "The installed Rex CLI could not run.") }
-            }
+        var environment = ProcessInfo.processInfo.environment
+        // Always use the default local server. Never use an inherited host,
+        // session, block, or client from the GUI launch environment.
+        for key in environment.keys.filter({ $0.hasPrefix("REX_") }) { environment.removeValue(forKey: key) }
+        let request = ChildProcessRequest(executable: executable.path, arguments: ["--autostart=false", "--timeout", "3s"] + arguments,
+                                          environment: environment, timeLimit: 4, outputLimit: 2_000_000)
+        Task {
+            let outcome = await ChildProcess.run(request)
+            if case .notStarted = outcome.end { completion(nil, "The installed Rex CLI could not run."); return }
+            if outcome.end == .exited(0), !outcome.stdoutCut { completion(outcome.stdout, nil); return }
+            let detail = AgentEvent.clean(outcome.stdoutText + outcome.stderrText, limit: 400)
+            completion(nil, detail.isEmpty ? "Rex timed out or refused the request. Check that Rex is open and Remote Control is enabled." : detail)
         }
     }
 }

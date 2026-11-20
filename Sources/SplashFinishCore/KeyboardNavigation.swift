@@ -1,3 +1,4 @@
+import BobukCore
 import Foundation
 
 /// Selection uses the same attention-first order as the visible inbox.
@@ -27,16 +28,21 @@ public struct KeyboardSelection: Equatable, Sendable {
 public enum PanelKeyAction: Equatable, Sendable {
     case snooze, clearAll, previous, next, open
 
-    /// macOS virtual key codes. Modifier chords and other apps are not handled.
+    /// Modifier chords and other apps are not handled.
     public static func from(keyCode: UInt16, hasCommandModifiers: Bool, isRepeat: Bool) -> Self? {
         guard !hasCommandModifiers else { return nil }
         switch keyCode {
-        case 53: return isRepeat ? nil : .snooze       // Escape
-        case 51: return isRepeat ? nil : .clearAll     // Backspace (not forward Delete)
-        case 126: return .previous                     // Up
-        case 125: return .next                         // Down
-        case 36, 76: return isRepeat ? nil : .open     // Return or keypad Enter
+        case VirtualKey.escape: return isRepeat ? nil : .snooze
+        case VirtualKey.delete: return isRepeat ? nil : .clearAll  // Backspace, not forward Delete
+        case VirtualKey.up: return .previous
+        case VirtualKey.down: return .next
+        case VirtualKey.returnKey, VirtualKey.keypadEnter: return isRepeat ? nil : .open
         default: return nil
         }
+    }
+
+    /// One-shot keys whose auto-repeat the panel swallows instead of passing it on; arrows repeat.
+    public static func isOneShot(keyCode: UInt16) -> Bool {
+        [VirtualKey.escape, VirtualKey.delete, VirtualKey.returnKey, VirtualKey.keypadEnter].contains(keyCode)
     }
 }

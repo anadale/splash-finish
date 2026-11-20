@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import BobukUI
 import SplashFinishCore
 
 /// Native text layout gives links their own hit targets without nesting a link
@@ -25,7 +26,7 @@ struct MessagePreview: NSViewRepresentable {
             if intent.contains(.strikethrough) { attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue }
             if let url = run.link {
                 attributes[.link] = url
-                attributes[.foregroundColor] = NSColor.theme(light: 0x885500, dark: 0xF0C37A)
+                attributes[.foregroundColor] = NSColor.dynamic(light: 0x885500, dark: 0xF0C37A)
                 attributes[.underlineStyle] = NSUnderlineStyle.single.rawValue
             }
             result.append(NSAttributedString(string: String(parsed[run.range].characters), attributes: attributes))
@@ -39,7 +40,7 @@ struct MessagePreview: NSViewRepresentable {
         view.isSelectable = false
         view.drawsBackground = false
         view.linkTextAttributes = [
-            .foregroundColor: NSColor.theme(light: 0x885500, dark: 0xF0C37A),
+            .foregroundColor: NSColor.dynamic(light: 0x885500, dark: 0xF0C37A),
             .underlineStyle: NSUnderlineStyle.single.rawValue
         ]
         view.textContainerInset = .zero

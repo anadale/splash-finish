@@ -1,4 +1,5 @@
 import AppKit
+import BobukCore
 import Observation
 import OSLog
 import SplashFinishCore
@@ -16,10 +17,10 @@ import SplashFinishCore
     @ObservationIgnored private let state: StateFile
     @ObservationIgnored private var timer: Timer?
     @ObservationIgnored private var persistTimer: Timer?
-    @ObservationIgnored private let logger = Logger(subsystem: AppPaths.bundleID, category: "inbox")
+    @ObservationIgnored private let logger = Logger(subsystem: Splash.bundleID, category: "inbox")
 
     init(stateURL: URL? = nil) {
-        let stateURL = stateURL ?? AppPaths.state
+        let stateURL = stateURL ?? AppPaths.splashFinish().state
         state = StateFile(url: stateURL)
         do { inbox = try state.load() }
         catch {
@@ -27,7 +28,7 @@ import SplashFinishCore
             logger.error("State load failed: \(error.localizedDescription, privacy: .public)")
             // Preserve corrupt state instead of silently overwriting the only copy.
             if FileManager.default.fileExists(atPath: stateURL.path) {
-                try? SafeFiles.write(Data(contentsOf: stateURL),
+                try? SafeFile.write(Data(contentsOf: stateURL),
                                      to: stateURL.appendingPathExtension("unreadable-\(UUID().uuidString)"))
             }
         }

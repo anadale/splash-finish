@@ -1,31 +1,11 @@
 import AppKit
 import SwiftUI
-import Sparkle
+import BobukCore
+import BobukSystem
+import BobukUI
+import BobukUpdates
+import OSLog
 import SplashFinishCore
-
-private final class SplashPanel: NSPanel {
-    var onKeyAction: ((PanelKeyAction) -> Bool)?
-    override var canBecomeKey: Bool { true }
-    override var canBecomeMain: Bool { false }
-
-    override func sendEvent(_ event: NSEvent) {
-        guard event.type == .keyDown, isKeyWindow else { super.sendEvent(event); return }
-        // Text editing must never trigger inbox-wide shortcuts or navigation.
-        if firstResponder is NSTextView { super.sendEvent(event); return }
-        let modifiers = event.modifierFlags.intersection([.command, .control, .option, .shift])
-        // Swallow repeats of destructive or one-shot shortcuts rather than passing
-        // them to another responder; arrow-key repeats still navigate normally.
-        if modifiers.isEmpty, event.isARepeat, [UInt16(53), 51, 36, 76].contains(event.keyCode) { return }
-        if let action = PanelKeyAction.from(keyCode: event.keyCode,
-                                            hasCommandModifiers: !modifiers.isEmpty,
-                                            isRepeat: event.isARepeat) {
-            if onKeyAction?(action) == true { return }
-            super.sendEvent(event)
-            return
-        }
-        super.sendEvent(event)
-    }
-}
 
 @MainActor final class AppDelegate: NSObject, NSApplicationDelegate {
     private var model: AppModel!
@@ -33,9 +13,11 @@ private final class SplashPanel: NSPanel {
     private var statusItem: NSStatusItem!
     private var appLock: FileLock?
     private var panelSize = CGSize(width: 470, height: 350)
-    private var integrationsWindow: NSWindow?
-    private var settingsWindow: NSWindow?
-    private var hotKey: GlobalHotKey?
+    private var integrationsWindow: HostedWindowController!
+    private var settingsWindow: HostedWindowController!
+    /// ⌥⌘S, matching the "Show Inbox" menu item. Carbon needs no Accessibility permission.
+    private let hotkeys = GlobalHotkeyCenter(signature: OSType(fourCharacterCode: "sFHK"))
+    private let log = BobukLog.logger("app")
     private var pendingURLs = [URL]()
     private var observers = [NSObjectProtocol]()
     /// Programmatic frame changes also post didMove; only user drags are remembered.
@@ -44,26 +26,16 @@ private final class SplashPanel: NSPanel {
 
     func applicationWillFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
-        AppTheme.applySaved()
+        AppearanceChoice.saved.apply()
     }
     func applicationDidFinishLaunching(_ notification: Notification) {
-        do { appLock = try FileLock(url: AppPaths.support.appendingPathComponent("app.lock"), nonblocking: true) }
-        catch { NSApp.terminate(nil); return }
+        do {
+            appLock = try FileLock(url: AppPaths.splashFinish().file("app.lock"), nonblocking: true,
+                                   busyMessage: Splash.busyMessage)
+        } catch { NSApp.terminate(nil); return }
         model = AppModel()
-        panel = SplashPanel(contentRect: NSRect(origin: .zero, size: panelSize),
-                            styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-        panel.title = "Splash Finish"
-        panel.isReleasedWhenClosed = false
-        panel.isFloatingPanel = true
-        panel.hidesOnDeactivate = false
-        panel.becomesKeyOnlyIfNeeded = false
+        panel = SplashPanel(size: panelSize)
         panel.onKeyAction = { [weak self] action in self?.handleKey(action) ?? false }
-        panel.isOpaque = false
-        panel.backgroundColor = .clear
-        panel.hasShadow = true
-        panel.level = .floating
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
-        panel.isMovableByWindowBackground = true
         panel.contentView = NSHostingView(rootView: PanelView(model: model,
             onOpen: { [weak self] event in
                 guard let self else { return }
@@ -73,11 +45,10 @@ private final class SplashPanel: NSPanel {
             }))
         model.onChange = { [weak self] reveal in self?.update(reveal: reveal) }
         _ = UpdateService.shared
-        hotKey = GlobalHotKey { [weak self] in self?.model.show() }
+        registerHotkey()
+        makeWindows()
         makeMenu()
-        if let run = HomebrewUpdate.resultDirectory(in: CommandLine.arguments, base: HomebrewUpdateRunner.defaultBase) {
-            HomebrewUpdateWindowController.shared.showRun(run, role: .final)
-        }
+        HomebrewLaunch.showResultIfRequested(app: .splashFinish, palette: .splash)
         update(reveal: model.revealsAtLaunch)
         DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in self?.offerIntegrationUpdates() }
         let urls = pendingURLs; pendingURLs.removeAll()
@@ -124,8 +95,11 @@ private final class SplashPanel: NSPanel {
         default: model.report(EventError.invalid("Unknown Splash Finish URL command"))
         }
     }
-    private var activeScreen: NSScreen? {
-        NSScreen.screens.first { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) } ?? panel?.screen ?? NSScreen.main
+    /// A failure (another app owns ⌥⌘S) is not fatal: the menu item stays and the app is fully usable.
+    private func registerHotkey() {
+        guard let hotkey = Hotkey(string: "option+cmd+s") else { return }
+        let status = hotkeys.register(hotkey, id: 1, repeats: false) { [weak self] _ in self?.model.show() }
+        if case .failed(let reason) = status { log.error("Global shortcut unavailable: \(reason, privacy: .public)") }
     }
     /// The panel keeps the corner the user dragged it to, as long as that corner is
     /// still on a connected screen; otherwise it returns to the active screen.
@@ -139,9 +113,9 @@ private final class SplashPanel: NSPanel {
         UserDefaults.standard.set([Double(panel.frame.minX), Double(panel.frame.maxY)], forKey: Self.panelCornerKey)
     }
     private func positionPanel() {
-        guard let screen = activeScreen else { return }
+        guard let screen = Screens.underPointer ?? panel.screen else { return }
         let placed = PanelPlacement.place(size: panelSize, remembered: rememberedPanelCorner,
-                                          screens: NSScreen.screens.map(\.visibleFrame), active: screen.visibleFrame)
+                                          screens: Screens.visibleFrames, active: screen.visibleFrame)
         model.maxListHeight = max(110, min(460, placed.area.height - 285))
         isPlacingPanel = true
         panel.setFrame(placed.frame, display: true)
@@ -151,12 +125,8 @@ private final class SplashPanel: NSPanel {
         guard size.width > 0, size.height > 0, size != panelSize else { return }
         panelSize = size
         guard let panel else { return }
-        var frame = panel.frame
-        frame.origin.y += frame.height - size.height
-        frame.size = size
-        if let area = panel.screen?.visibleFrame {
-            frame.origin.y = max(area.minY + 16, min(area.maxY - size.height - 16, frame.origin.y))
-        }
+        var frame = PanelPlacement.resize(panel.frame, toHeight: size.height, keepingTopIn: panel.screen?.visibleFrame)
+        frame.size.width = size.width
         // Growing keeps the top edge, so this is not a move worth remembering.
         isPlacingPanel = true
         // SwiftUI has already laid out the smaller inbox. AppKit frame animation
@@ -256,7 +226,7 @@ private final class SplashPanel: NSPanel {
     }
     @objc private func checkForUpdates() { UpdateService.shared.checkForUpdates() }
     @objc private func about() {
-        NSApp.activate()
+        AppActivation.activate()
         NSApp.orderFrontStandardAboutPanel(options: [.applicationName: "Splash Finish",
                                                     .applicationVersion: CLI.version,
                                                     .credits: NSAttributedString(string: "One question. Two results. One window.\ngithub.com/bobuk-io/splash-finish")])
@@ -275,38 +245,35 @@ private final class SplashPanel: NSPanel {
         alert.informativeText = "Splash Finish found older integrations. Review them before updating; Codex may require hook trust again."
         alert.addButton(withTitle: "Review Integrations")
         alert.addButton(withTitle: "Later")
-        NSApp.activate()
+        AppActivation.activate()
         if alert.runModal() == .alertFirstButtonReturn { showIntegrations() }
     }
-    @objc private func showSettings() {
-        if settingsWindow == nil {
-            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 440, height: 300),
-                                  styleMask: [.titled, .closable], backing: .buffered, defer: false)
-            window.title = "Settings"
-            window.isReleasedWhenClosed = false
-            window.contentView = NSHostingView(rootView: SettingsView(model: model,
-                installSkills: { [weak self] in self?.changeSkills(install: true) },
-                uninstallSkills: { [weak self] in self?.changeSkills(install: false) }))
-            window.center()
-            settingsWindow = window
-        }
-        NSApp.activate(ignoringOtherApps: true)
-        settingsWindow?.makeKeyAndOrderFront(nil)
+    private func windowRect(forBody size: NSSize) -> NSRect {
+        NSRect(origin: .zero, size: ChromeMetrics.windowSize(forBody: size))
     }
-
-    @objc private func showIntegrations() {
-        if integrationsWindow == nil {
-            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 560, height: 480),
-                                  styleMask: [.titled, .closable, .miniaturizable, .resizable],
-                                  backing: .buffered, defer: false)
+    private func makeWindows() {
+        settingsWindow = HostedWindowController(window: { [unowned self] in
+            let window = ChromeWindow(contentRect: windowRect(forBody: NSSize(width: 440, height: 300)), style: .splashWindow,
+                                      resizable: false, showsTitle: true)
+            window.title = "Settings"
+            return window
+        }, rootView: { [unowned self] in
+            SettingsView(model: model,
+                         installSkills: { [weak self] in self?.changeSkills(install: true) },
+                         uninstallSkills: { [weak self] in self?.changeSkills(install: false) })
+        })
+        integrationsWindow = HostedWindowController(frameName: "Integrations", window: { [unowned self] in
+            let window = ChromeWindow(contentRect: windowRect(forBody: NSSize(width: 560, height: 480)), style: .splashWindow,
+                                      showsTitle: true)
             window.title = "Splash Finish — Integrations"
-            window.isReleasedWhenClosed = false
-            window.center()
-            integrationsWindow = window
-        }
-        integrationsWindow?.contentView = NSHostingView(rootView: IntegrationsView(model: model))
-        integrationsWindow?.makeKeyAndOrderFront(nil)
-        NSApp.activate()
+            return window
+        }, rootView: { [unowned self] in IntegrationsView(model: model) })
+    }
+    @objc private func showSettings() { settingsWindow.show() }
+    @objc private func showIntegrations() {
+        // Reopening an open window refreshes the integration states, as before.
+        (integrationsWindow.window as? ChromeWindow)?.setContent(IntegrationsView(model: model))
+        integrationsWindow.show()
     }
     private func changeSkills(install: Bool) {
         let alert = NSAlert()
@@ -324,7 +291,7 @@ private final class SplashPanel: NSPanel {
             if !piAsk { alert.informativeText += "\n\npi-agent-ask was not detected globally. Install it with: pi install npm:pi-agent-ask. Project-local installations may still work." }
             alert.accessoryView = richQuestions
         }
-        NSApp.activate()
+        AppActivation.activate()
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         do {
             let messages = try CLI.integrationInstaller().run(install: install, agents: AgentKind.allCases,

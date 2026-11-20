@@ -1,33 +1,19 @@
 import AppKit
-import ServiceManagement
-import SplashFinishCore
+import BobukCore
+import BobukUpdates
 
 @main struct SplashFinishMain {
     @MainActor static func main() {
+        // The Homebrew recovery viewer shows only the progress window and never returns.
+        HomebrewLaunch.runViewerIfRequested(CommandLine.arguments, app: .splashFinish, palette: .splash)
         let args = Array(CommandLine.arguments.dropFirst())
-        if let run = HomebrewUpdate.resultDirectory(in: args, base: HomebrewUpdateRunner.defaultBase,
-                                                    argument: HomebrewUpdate.viewerArgument) {
-            HomebrewUpdateViewer.run(run)
-        }
-        let updateResult = HomebrewUpdate.resultDirectory(in: args, base: HomebrewUpdateRunner.defaultBase)
-        if updateResult == nil && !args.isEmpty && !args[0].hasPrefix("-psn_") {
+        // The restart after an update and Finder's -psn_ argument start the app, not the CLI.
+        if let first = args.first, !HomebrewLaunch.isUpdateLaunch(args), !AppBundle.isProcessSerialNumber(first) {
             exit(CLI.run(args))
         }
         let app = NSApplication.shared
         let delegate = AppDelegate()
         app.delegate = delegate
         withExtendedLifetime(delegate) { app.run() }
-    }
-}
-
-@MainActor enum LoginItem {
-    static func toggle(model: AppModel) {
-        do {
-            if SMAppService.mainApp.status == .enabled { try SMAppService.mainApp.unregister() }
-            else {
-                try SMAppService.mainApp.register()
-                if SMAppService.mainApp.status == .requiresApproval { SMAppService.openSystemSettingsLoginItems() }
-            }
-        } catch { model.report(error); model.show() }
     }
 }

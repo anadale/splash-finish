@@ -1,4 +1,5 @@
 import AppKit
+import BobukCore
 import SplashFinishCore
 
 @MainActor enum CLI {
@@ -65,17 +66,18 @@ import SplashFinishCore
     static var executable: String {
         AppBundle.executableURL.path
     }
+    /// SwiftPM's resource bundle, found without `Bundle.module` and its build-directory fallback.
+    nonisolated static let resourceBundleName = "SplashFinish_SplashFinish.bundle"
+    static var resources: Bundle? { AppBundle.resourceBundle(named: resourceBundleName) }
     static func integrationInstaller() throws -> IntegrationInstaller {
-        guard let resources = AppBundle.resources()?.url(forResource: "Integrations", withExtension: nil) else {
+        guard let resources = resources?.url(forResource: "Integrations", withExtension: nil) else {
             throw EventError.invalid("Integration resources are missing; reinstall the app")
         }
         return IntegrationInstaller(executable: executable, resources: resources)
     }
     static func send(_ url: URL) throws {
         let process = Process(); process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-        let executableURL = URL(fileURLWithPath: executable)
-        let app = executableURL.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-        if app.pathExtension == "app" { process.arguments = ["-g", "-a", app.path, url.absoluteString] }
+        if let app = AppBundle.applicationURL { process.arguments = ["-g", "-a", app.path, url.absoluteString] }
         else { process.arguments = ["-g", url.absoluteString] }
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
@@ -84,7 +86,7 @@ import SplashFinishCore
     }
     /// Cheap read of the persisted inbox; used to skip no-op hook work.
     private static func hasInboxEntry(_ key: String) -> Bool {
-        guard let inbox = try? StateFile(url: AppPaths.state).load() else { return false }
+        guard let inbox = try? StateFile(url: AppPaths.splashFinish().state).load() else { return false }
         return inbox.items.contains { $0.key == key }
     }
     static func run(_ args: [String]) -> Int32 {
@@ -122,7 +124,7 @@ import SplashFinishCore
                 try send(URL(string: "\(DeepLink.scheme)://\(command)")!)
             case "status":
                 let options = try Options(args.dropFirst(), allowed: ["--raw"], flags: ["--raw"])
-                let state = try StateFile(url: AppPaths.state).load()
+                let state = try StateFile(url: AppPaths.splashFinish().state).load()
                 if options["raw"] != nil {
                     let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
                     print(String(decoding: try encoder.encode(state), as: UTF8.self))
@@ -138,7 +140,7 @@ import SplashFinishCore
                 }
             case "doctor":
                 guard args.count == 1 else { throw EventError.invalid("doctor takes no arguments") }
-                let inbox = try StateFile(url: AppPaths.state).load()
+                let inbox = try StateFile(url: AppPaths.splashFinish().state).load()
                 let statuses = try integrationInstaller().inspect(inbox: inbox)
                 let formatter = ISO8601DateFormatter()
                 for item in statuses {

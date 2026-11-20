@@ -20,6 +20,10 @@ REPOSITORY = "bobuk-io/splash-finish"
 TEAM_ID = "S32B9D7R7D"
 APP_NAME = "Splash Finish.app"
 BIN_NAME = "splash-finish"
+# Every bobuk-io app lives in /Applications. Older installers used ~/Applications; that copy
+# is replaced and removed so that only one Splash Finish remains.
+DEFAULT_APP_DIR = Path("/Applications")
+LEGACY_APP_DIR = Path.home() / "Applications"
 MAX_ZIP_BYTES = 120 * 1024 * 1024
 MAX_UNPACKED_BYTES = 300 * 1024 * 1024
 
@@ -136,7 +140,20 @@ def verify_signature(app: Path) -> None:
         raise InstallError(f"The application was not signed with the expected Developer ID team ({TEAM_ID}).")
 
 
-def install(archive: Path, sums: Path, app_dir: Path, bin_dir: Path) -> Path:
+def legacy_copy(app_dir: Path, legacy_app_dir: Path | None) -> Path | None:
+    """The copy an older installer put in ~/Applications, when installing elsewhere."""
+    if legacy_app_dir is None or legacy_app_dir.expanduser().resolve() == app_dir.expanduser().resolve():
+        return None
+    legacy = legacy_app_dir / APP_NAME
+    return legacy if legacy.is_dir() and not legacy.is_symlink() else None
+
+
+def quit_running_app() -> None:
+    subprocess.run(["/usr/bin/osascript", "-e", 'if application id "io.bobuk.splash-finish" is running then tell application id "io.bobuk.splash-finish" to quit'],
+                   capture_output=True, text=True, timeout=10, check=False)
+
+
+def install(archive: Path, sums: Path, app_dir: Path, bin_dir: Path, legacy_app_dir: Path | None = None) -> Path:
     verify_checksum(archive, sums)
     check_archive(archive)
     app_dir.mkdir(parents=True, exist_ok=True)
@@ -148,7 +165,10 @@ def install(archive: Path, sums: Path, app_dir: Path, bin_dir: Path) -> Path:
     if binary.exists() and not binary.is_symlink():
         raise InstallError(f"Refusing to replace an existing file: {binary}")
     target = destination / "Contents/MacOS/SplashFinish"
-    if binary.is_symlink() and os.readlink(binary) != str(target):
+    legacy = legacy_copy(app_dir, legacy_app_dir)
+    # The command may still point into the old ~/Applications copy; that link is ours to move.
+    ours = {str(target)} | ({str(legacy / "Contents/MacOS/SplashFinish")} if legacy else set())
+    if binary.is_symlink() and os.readlink(binary) not in ours:
         raise InstallError(f"Refusing to replace an unrelated symlink: {binary}")
     # Extract on the same volume as the destination so replacements can be renamed atomically.
     with tempfile.TemporaryDirectory(prefix=".splash-finish-", dir=app_dir) as tmp:
@@ -161,11 +181,16 @@ def install(archive: Path, sums: Path, app_dir: Path, bin_dir: Path) -> Path:
         if not (app / "Contents/MacOS/SplashFinish").is_file():
             raise InstallError("Archive does not contain the expected application.")
         verify_signature(app)
+        if legacy is not None:
+            try:
+                verify_signature(legacy)
+            except InstallError:
+                legacy = None  # Not ours: leave it alone.
+        if destination.exists() or legacy is not None:
+            # Ask the running app to quit before replacing its bundle.
+            quit_running_app()
         if destination.exists():
             verify_signature(destination)
-            # Ask the running app to quit before replacing its bundle.
-            subprocess.run(["/usr/bin/osascript", "-e", 'if application id "io.bobuk.splash-finish" is running then tell application id "io.bobuk.splash-finish" to quit'],
-                           capture_output=True, text=True, timeout=10, check=False)
             old = staging / "old.app"
             os.rename(destination, old)
         else:
@@ -190,13 +215,20 @@ def install(archive: Path, sums: Path, app_dir: Path, bin_dir: Path) -> Path:
                     raise InstallError(f"Destination changed during installation. Previous app preserved at {backup}")
                 os.rename(old, destination)
             raise
+    if legacy is not None:
+        try:
+            shutil.rmtree(legacy)
+            print(f"Removed the previous copy in {legacy.parent}")
+        except OSError as error:
+            print(f"Remove the previous copy yourself: {legacy} ({error})", file=sys.stderr)
     subprocess.run(["/usr/bin/open", "-g", str(destination)], check=False)
     return destination
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Install the latest signed Splash Finish release.")
-    parser.add_argument("--app-dir", type=Path, default=Path.home() / "Applications")
+    parser.add_argument("--app-dir", type=Path, default=None,
+                        help="where to install (default /Applications; ~/Applications works without admin rights)")
     parser.add_argument("--bin-dir", type=Path, default=None)
     args = parser.parse_args(argv)
     if sys.platform != "darwin":
@@ -204,10 +236,15 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     selected, on_path = choose_bin()
     bin_dir = args.bin_dir.expanduser() if args.bin_dir else selected
+    app_dir = args.app_dir.expanduser() if args.app_dir else DEFAULT_APP_DIR
+    if app_dir.is_dir() and not os.access(app_dir, os.W_OK):
+        print(f"Install failed: {app_dir} is not writable. Use an administrator account or run with --app-dir ~/Applications.", file=sys.stderr)
+        return 1
     try:
         with tempfile.TemporaryDirectory(prefix="splash-finish-download-") as tmp:
             archive, sums = release_assets(Path(tmp))
-            destination = install(archive, sums, args.app_dir.expanduser(), bin_dir)
+            destination = install(archive, sums, app_dir, bin_dir,
+                                  legacy_app_dir=None if args.app_dir else LEGACY_APP_DIR)
         print(f"Installed Splash Finish to {destination}")
         print(f"Command: {bin_dir / BIN_NAME}")
         if not args.bin_dir and not on_path:

@@ -7,7 +7,7 @@ Designed by Codex; this is candidate 1 selected by the user.
 - `png/1024.png` — approved 1024×1024 master, with transparent margins/corners.
 - `png/{16,32,64,128,256,512}.png` — direct SVG renders at native sizes, so small icons do not depend on downsampling the master.
 
-`Scripts/render_icon.swift` copies these PNGs into the standard ten-layer macOS iconset and invokes Apple's `iconutil`. `Scripts/package_app.sh` embeds the resulting `build/Icon.icns` in the app. Normal builds require no Homebrew or third-party renderer. The menu-bar icon remains a separate monochrome template image.
+`Scripts/render_icon.swift` copies these PNGs into the standard ten-layer macOS iconset and invokes Apple's `iconutil`. `Scripts/package_app.sh` (the shared packager, `PACKAGE_ICON` in `release.env`) runs it into `.build/` and embeds the resulting `Icon.icns` in the app. Normal builds require no Homebrew or third-party renderer. The menu-bar icon remains a separate monochrome template image.
 
 After intentionally editing the SVG, regenerate the checked-in PNGs using librsvg (`rsvg-convert`):
 

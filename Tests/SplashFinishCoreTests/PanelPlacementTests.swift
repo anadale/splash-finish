@@ -1,5 +1,7 @@
+// Splash Finish relies on the kit default anchor (55 points below the middle) and on the remembered
+// corner; these pin that behavior of `BobukCore.PanelPlacement` for the inbox.
 import XCTest
-@testable import SplashFinishCore
+import BobukCore
 
 final class PanelPlacementTests: XCTestCase {
     let main = CGRect(x: 0, y: 0, width: 1440, height: 875)

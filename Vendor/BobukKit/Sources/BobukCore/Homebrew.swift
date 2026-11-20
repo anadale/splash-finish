@@ -1,22 +1,48 @@
-// Homebrew-aware updates: which copy Homebrew manages, the one command SplashFinish runs and what its
-// result means. Pure logic over paths and text; the process run and the window live in the app.
+// Homebrew-aware updates: which copy Homebrew manages, the one command an app runs and what its
+// result means. Pure logic over paths and text; the process run and the window are BobukUpdates.
+// From Ting and Splash Finish, which had identical copies apart from the names.
 import Foundation
 
-/// A Splash Finish.app that a Caskroom record of the cask `splash-finish` points to.
+/// One app's cask in the bobuk-io tap.
+public struct HomebrewCask: Equatable, Sendable {
+    /// Cask name, such as `ting` or `splash-finish`.
+    public var name: String
+    /// Fully qualified token, such as `bobuk-io/tap/ting`.
+    public var tap: String
+    /// The bundle the cask installs, such as `Ting.app` or `Splash Finish.app`.
+    public var appBundleName: String
+
+    public init(name: String, tap: String? = nil, appBundleName: String) {
+        self.name = name
+        self.tap = tap ?? "bobuk-io/tap/\(name)"
+        self.appBundleName = appBundleName
+    }
+}
+
+/// An app that a Caskroom record of its cask points to.
 public struct HomebrewInstall: Equatable, Sendable {
     /// The Homebrew prefix that owns the record, such as `/opt/homebrew`.
     public let prefix: URL
-    /// `<prefix>/Caskroom/splash-finish/<version>/Splash Finish.app`, a symlink or a copy.
+    /// `<prefix>/Caskroom/<cask>/<version>/<App>.app`, a symlink or a copy.
     public let record: URL
-    /// The installed app the record resolves to: the place to start SplashFinish again after an update.
+    /// The installed app the record resolves to: the place to start the app again after an update.
     public let app: URL
+    public let cask: HomebrewCask
+
+    public init(prefix: URL, record: URL, app: URL, cask: HomebrewCask) {
+        self.prefix = prefix
+        self.record = record
+        self.app = app
+        self.cask = cask
+    }
 
     /// The `brew` of the owning prefix, never one found elsewhere.
     public var brew: URL { prefix.appendingPathComponent("bin/brew") }
+    /// `<prefix>/Caskroom/<cask>`.
+    public var caskroom: URL { prefix.appendingPathComponent("Caskroom/\(cask.name)") }
 }
 
 public enum HomebrewDetection {
-    public static let cask = "splash-finish"
     public static let defaultPrefixes = ["/opt/homebrew", "/usr/local"]
 
     /// Prefixes to look at, in order: `HOMEBREW_PREFIX`, the prefix of each `brew` found in `PATH`,
@@ -42,15 +68,15 @@ public enum HomebrewDetection {
     /// Nil keeps the Sparkle updates of a directly downloaded copy: no record, a record of another
     /// path, an unreadable Caskroom, a prefix without a runnable `brew`, or two prefixes that both
     /// claim the copy.
-    public static func install(of bundle: URL, prefixes: [URL],
+    public static func install(of bundle: URL, cask: HomebrewCask, prefixes: [URL],
                                fileManager: FileManager = .default) -> HomebrewInstall? {
         let target = resolved(bundle)
         var found: [HomebrewInstall] = []
         for prefix in prefixes {
-            let caskroom = prefix.appendingPathComponent("Caskroom/\(cask)")
+            let caskroom = prefix.appendingPathComponent("Caskroom/\(cask.name)")
             guard let versions = try? fileManager.contentsOfDirectory(atPath: caskroom.path) else { continue }
             let match = versions.filter { !$0.hasPrefix(".") }.sorted().compactMap { version -> URL? in
-                let record = caskroom.appendingPathComponent(version).appendingPathComponent("Splash Finish.app")
+                let record = caskroom.appendingPathComponent(version).appendingPathComponent(cask.appBundleName)
                 var isFolder: ObjCBool = false
                 guard fileManager.fileExists(atPath: record.path, isDirectory: &isFolder), isFolder.boolValue,
                       resolved(record) == target else { return nil }
@@ -58,7 +84,7 @@ public enum HomebrewDetection {
             }.last
             guard let match else { continue }
             guard fileManager.isExecutableFile(atPath: prefix.appendingPathComponent("bin/brew").path) else { return nil }
-            found.append(HomebrewInstall(prefix: prefix, record: match, app: bundle.standardizedFileURL))
+            found.append(HomebrewInstall(prefix: prefix, record: match, app: bundle.standardizedFileURL, cask: cask))
         }
         return found.count == 1 ? found[0] : nil
     }
@@ -77,23 +103,25 @@ public enum HomebrewUpdateOutcome: Equatable, Sendable {
 }
 
 public enum HomebrewUpdate {
-    public static let tap = "bobuk-io/tap/splash-finish"
-    /// Only Splash Finish: the cask is always named, so Homebrew never upgrades anything else.
-    /// `--greedy` because the cask says `auto_updates true`, which plain upgrades skip.
-    public static let arguments = ["upgrade", "--cask", "--greedy", tap]
     /// The argument with which the helper starts the installed copy again to show the result.
     public static let resultArgument = "--homebrew-update-log"
-    /// The argument with which the helper starts the progress viewer, the copy of Splash Finish.app in the
-    /// run folder, while the installed Splash Finish is gone.
+    /// The argument with which the helper starts the progress viewer, the copy of the app in the
+    /// run folder, while the installed app is gone.
     public static let viewerArgument = "--homebrew-update-viewer"
+
+    /// Only this app: the cask is always named, so Homebrew never upgrades anything else.
+    /// `--greedy` because the casks say `auto_updates true`, which plain upgrades skip.
+    public static func arguments(for cask: HomebrewCask) -> [String] {
+        ["upgrade", "--cask", "--greedy", cask.tap]
+    }
 
     /// The command as the window shows it.
     public static func commandLine(for install: HomebrewInstall) -> String {
-        ([install.brew.path] + arguments).joined(separator: " ")
+        ([install.brew.path] + arguments(for: install.cask)).joined(separator: " ")
     }
 
     /// Success only on exit code 0 without a cancel. Exit 0 without an upgrade report means that
-    /// nothing was upgraded ("Not upgrading splash-finish, the latest version is already installed").
+    /// nothing was upgraded ("Not upgrading ting, the latest version is already installed").
     /// Every other exit code is a failure with the real output: a network error, a Homebrew lock,
     /// a refused password prompt.
     public static func outcome(exitCode: Int32, output: String, cancelled: Bool) -> HomebrewUpdateOutcome {
@@ -112,9 +140,15 @@ public enum HomebrewUpdate {
         guard folder.deletingLastPathComponent().path == base.standardizedFileURL.path else { return nil }
         return folder
     }
+
+    /// True when the process was started by the update helper (viewer or result), so the app must
+    /// not treat its arguments as a command line.
+    public static func isUpdateLaunch(_ arguments: [String]) -> Bool {
+        arguments.contains(resultArgument) || arguments.contains(viewerArgument)
+    }
 }
 
-/// Who updates this copy of Splash Finish.
+/// Who updates this copy of the app.
 public enum UpdaterChoice: Equatable, Sendable {
     case homebrew(HomebrewInstall)
     case sparkle
@@ -124,5 +158,20 @@ public enum UpdaterChoice: Equatable, Sendable {
     public static func choose(homebrew: HomebrewInstall?, hasFeed: Bool, hasKey: Bool) -> UpdaterChoice {
         if let homebrew { return .homebrew(homebrew) }
         return hasFeed && hasKey ? .sparkle : .none
+    }
+
+    /// The choice for a running copy. Only a release copy (Sparkle feed and key in Info.plist) can be
+    /// one that Homebrew installed, so a development build never looks. The bundle is the real app
+    /// behind the executable, also when it was started through a command-line symlink.
+    public static func detect(cask: HomebrewCask?, bundle: URL?, info: [String: Any],
+                              environment: [String: String]) -> UpdaterChoice {
+        let hasFeed = (info["SUFeedURL"] as? String)?.isEmpty == false
+        let hasKey = (info["SUPublicEDKey"] as? String)?.isEmpty == false
+        var homebrew: HomebrewInstall?
+        if hasFeed && hasKey, let cask, let bundle {
+            homebrew = HomebrewDetection.install(of: bundle, cask: cask,
+                                                 prefixes: HomebrewDetection.prefixes(environment: environment))
+        }
+        return choose(homebrew: homebrew, hasFeed: hasFeed, hasKey: hasKey)
     }
 }
