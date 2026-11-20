@@ -56,10 +56,10 @@ import SplashFinishCore
 
     func receive(_ event: AgentEvent) {
         do {
+            let received = try inbox.receive(event)
             // Finish a snooze whose deadline passed before its timer ran, so a
             // steady stream of events cannot keep the panel hidden.
             let woke = inbox.wakeIfDue()
-            let received = try inbox.receive(event)
             selection.reconcile(keys: orderedKeys)
             persist(); scheduleWake(); onChange?(shouldReveal(received || (woke && !inbox.items.isEmpty)))
         } catch { report(error) }
