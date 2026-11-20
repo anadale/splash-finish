@@ -210,7 +210,7 @@ struct InboxList<Content: View>: View {
                     }
                 }.buttonStyle(QuietButtonStyle(palette: pickerPalette, height: 33)).disabled(model.items.isEmpty)
                     .keyboardShortcut(.cancelAction)
-                    .help("Hide for 15 minutes or until the next new event · Esc")
+                    .help("Hide for 15 minutes; new events still collect · Esc")
                 Spacer()
                 Button("Clear all", action: model.clear)
                     .buttonStyle(QuietButtonStyle(palette: pickerPalette, height: 33)).keyboardShortcut("w", modifiers: .command)

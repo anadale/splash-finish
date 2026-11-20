@@ -18,7 +18,7 @@ public struct Inbox: Codable, Equatable, Sendable {
     public var attention: [AgentEvent] { items.filter { $0.status == .attention } }
     public var completed: [AgentEvent] { items.filter { $0.status == .done } }
 
-    /// Returns true only when this event should reveal the panel.
+    /// Returns true only when this event should reveal the panel; never while snoozed.
     @discardableResult public mutating func receive(_ raw: AgentEvent) throws -> Bool {
         let event = try raw.validated()
         guard !seenEventIDs.contains(event.id) else { return false }
@@ -65,8 +65,9 @@ public struct Inbox: Codable, Equatable, Sendable {
         if let index = items.firstIndex(where: { $0.key == event.key }) { items[index] = event }
         else { items.append(event) }
         items = Array(items.suffix(200))
-        snoozedUntil = nil
-        return true
+        // Snooze holds until its deadline or an explicit show; the wake timer
+        // reveals everything collected meanwhile.
+        return snoozedUntil == nil
     }
 
     /// Stable key for per-agent bookkeeping; display names may gain spaces or case.
