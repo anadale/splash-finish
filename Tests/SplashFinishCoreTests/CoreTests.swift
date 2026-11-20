@@ -31,9 +31,33 @@ final class InboxTests: XCTestCase {
         XCTAssertFalse(inbox.wakeIfDue(now: now.addingTimeInterval(899)))
         XCTAssertFalse(try inbox.receive(first)); XCTAssertNotNil(inbox.snoozedUntil)
         XCTAssertFalse(try inbox.receive(event())); XCTAssertNotNil(inbox.snoozedUntil, "Identical updates must not wake snooze")
-        XCTAssertTrue(try inbox.receive(event("two"))); XCTAssertNil(inbox.snoozedUntil)
-        inbox.snooze(now: now); XCTAssertTrue(inbox.wakeIfDue(now: now.addingTimeInterval(900)))
+        XCTAssertFalse(try inbox.receive(event("two")), "A new event must not reveal a snoozed panel")
+        XCTAssertEqual(inbox.snoozedUntil, now.addingTimeInterval(900))
+        XCTAssertTrue(inbox.wakeIfDue(now: now.addingTimeInterval(900)))
         XCTAssertNil(inbox.snoozedUntil)
+        inbox.snooze(now: now); inbox.reveal(); XCTAssertNil(inbox.snoozedUntil, "An explicit show ends snooze")
+    }
+    func testSnoozeKeepsPanelHiddenWhenAnotherTaskArrives() throws {
+        let now = Date(timeIntervalSince1970: 1000)
+        var inbox = Inbox(); try inbox.receive(event("one"))
+        inbox.snooze(now: now, duration: 3600)
+        let deadline = now.addingTimeInterval(3600)
+        try inbox.receive(event("two"))
+        XCTAssertEqual(inbox.items.map(\.task), ["one", "two"])
+        XCTAssertEqual(inbox.snoozedUntil, deadline)
+        XCTAssertFalse(inbox.wakeIfDue(now: deadline.addingTimeInterval(-1)))
+        XCTAssertTrue(inbox.wakeIfDue(now: deadline))
+    }
+    func testSnoozeKeepsPanelHiddenWhenSameTaskChanges() throws {
+        let now = Date(timeIntervalSince1970: 1000)
+        var inbox = Inbox(); try inbox.receive(event("one"))
+        inbox.snooze(now: now, duration: 3600)
+        let deadline = now.addingTimeInterval(3600)
+        try inbox.receive(event("one", title: "New answer"))
+        XCTAssertEqual(inbox.items.map(\.title), ["New answer"])
+        XCTAssertEqual(inbox.snoozedUntil, deadline)
+        XCTAssertFalse(inbox.wakeIfDue(now: deadline.addingTimeInterval(-1)))
+        XCTAssertTrue(inbox.wakeIfDue(now: deadline))
     }
     func testResumeDoesNotWakeAndFinalDismissCancelsSnooze() throws {
         var inbox = Inbox(); try inbox.receive(event()); try inbox.receive(event("two"))
