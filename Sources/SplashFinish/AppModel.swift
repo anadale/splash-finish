@@ -16,6 +16,7 @@ import SplashFinishCore
     @ObservationIgnored var onChange: ((Bool) -> Void)?
     @ObservationIgnored private let state: StateFile
     @ObservationIgnored private var timer: Timer?
+    @ObservationIgnored private var timerDeadline: Date?
     @ObservationIgnored private var persistTimer: Timer?
     @ObservationIgnored private let logger = Logger(subsystem: Splash.bundleID, category: "inbox")
 
@@ -56,8 +57,11 @@ import SplashFinishCore
     func receive(_ event: AgentEvent) {
         do {
             let received = try inbox.receive(event)
+            // Finish a snooze whose deadline passed before its timer ran, so a
+            // steady stream of events cannot keep the panel hidden.
+            let woke = inbox.wakeIfDue()
             selection.reconcile(keys: orderedKeys)
-            persist(); scheduleWake(); onChange?(shouldReveal(received))
+            persist(); scheduleWake(); onChange?(shouldReveal(received || (woke && !inbox.items.isEmpty)))
         } catch { report(error) }
     }
     var respectFocus = UserDefaults.standard.object(forKey: "respectFocus") as? Bool ?? true
@@ -175,11 +179,15 @@ import SplashFinishCore
         do { try state.save(inbox) } catch { report(error) }
     }
     private func scheduleWake() {
-        timer?.invalidate(); timer = nil
+        // Keep a pending timer for the same deadline instead of postponing it.
+        if let timer, timer.isValid, timerDeadline == inbox.snoozedUntil { return }
+        timer?.invalidate(); timer = nil; timerDeadline = nil
         guard let date = inbox.snoozedUntil else { return }
+        timerDeadline = date
         timer = Timer.scheduledTimer(withTimeInterval: max(0.05, date.timeIntervalSinceNow), repeats: false) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
+                self.timer = nil; self.timerDeadline = nil
                 if self.inbox.wakeIfDue() { self.persist(); self.onChange?(self.shouldReveal(true)) }
                 else { self.scheduleWake() }
             }
