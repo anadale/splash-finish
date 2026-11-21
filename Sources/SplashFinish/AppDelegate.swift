@@ -11,6 +11,7 @@ import SplashFinishCore
     private var model: AppModel!
     private var panel: SplashPanel!
     private var statusItem: NSStatusItem!
+    private var indicatedSnoozeDeadline: Date?
     private var appLock: FileLock?
     private var panelSize = CGSize(width: 470, height: 350)
     private var integrationsWindow: HostedWindowController!
@@ -136,8 +137,30 @@ import SplashFinishCore
         isPlacingPanel = false
     }
     private func update(reveal: Bool) {
-        statusItem?.button?.title = model.items.isEmpty ? "" : " \(model.items.count)"
-        if model.isSnoozed || (!reveal && model.items.isEmpty) { panel.orderOut(nil) }
+        let snoozed = model.isSnoozed
+        let count = model.items.count
+        if let button = statusItem?.button {
+            button.title = count == 0 ? "" : " \(count)"
+            let deadline = snoozed ? model.inbox.snoozedUntil : nil
+            if deadline != indicatedSnoozeDeadline {
+                indicatedSnoozeDeadline = deadline
+                if let deadline {
+                    let time = deadline.formatted(
+                        date: Calendar.current.isDateInToday(deadline) ? .omitted : .abbreviated,
+                        time: .shortened
+                    )
+                    let description = "Snoozed until \(time)"
+                    button.image = Self.snoozedStatusImage
+                    button.toolTip = description
+                    button.setAccessibilityLabel("Splash Finish notifications, \(description)")
+                } else {
+                    button.image = Self.statusImage
+                    button.toolTip = "Splash Finish"
+                    button.setAccessibilityLabel("Splash Finish notifications")
+                }
+            }
+        }
+        if snoozed || (!reveal && count == 0) { panel.orderOut(nil) }
         else if reveal {
             if !panel.isVisible {
                 positionPanel()
@@ -173,17 +196,24 @@ import SplashFinishCore
         menu.addItem(entry)
         return entry
     }
-    private func makeMenu() {
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        let image = NSImage(size: NSSize(width: 22, height: 22), flipped: false) { rect in
-            NSColor.labelColor.setFill()
+    private static let statusImage = makeStatusImage(snoozed: false)
+    private static let snoozedStatusImage = makeStatusImage(snoozed: true)
+
+    private static func makeStatusImage(snoozed: Bool) -> NSImage {
+        let image = NSImage(size: NSSize(width: 22, height: 22), flipped: false) { _ in
+            NSColor.labelColor.withAlphaComponent(snoozed ? 0.55 : 1).setFill()
             for (x, y, height) in [(3.0, 3.0, 9.0), (9.0, 4.0, 16.0), (15.0, 11.0, 9.0)] {
                 NSBezierPath(roundedRect: NSRect(x: x, y: y, width: 3.5, height: height), xRadius: 1.75, yRadius: 1.75).fill()
             }
             return true
         }
         image.isTemplate = true
-        statusItem.button?.image = image
+        return image
+    }
+
+    private func makeMenu() {
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        statusItem.button?.image = Self.statusImage
         statusItem.button?.imagePosition = .imageLeading
         statusItem.button?.toolTip = "Splash Finish"
         statusItem.button?.setAccessibilityLabel("Splash Finish notifications")

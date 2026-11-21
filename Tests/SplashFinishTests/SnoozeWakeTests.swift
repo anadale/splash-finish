@@ -41,4 +41,21 @@ final class SnoozeWakeTests: XCTestCase {
             model.clear()
         }
     }
+
+    @MainActor
+    func testEmptyInboxRefreshesWithoutRevealingWhenSnoozeExpires() async {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let model = AppModel(stateURL: root.appendingPathComponent("state.json"))
+        defer { model.onChange = nil }
+        model.snooze(until: Date().addingTimeInterval(0.05))
+
+        let expired = expectation(description: "The menu bar receives the snooze expiration")
+        model.onChange = { reveal in
+            XCTAssertFalse(reveal, "An empty inbox must stay hidden")
+            XCTAssertNil(model.inbox.snoozedUntil)
+            expired.fulfill()
+        }
+        await fulfillment(of: [expired], timeout: 2)
+    }
 }

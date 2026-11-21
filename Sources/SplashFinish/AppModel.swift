@@ -196,7 +196,7 @@ import SplashFinishCore
                 let reveal = self.inbox.wakeIfDue()
                 if self.inbox.snoozedUntil != nil { self.scheduleWake(); return }
                 self.persist()
-                if reveal { self.onChange?(self.shouldReveal(true)) }
+                self.onChange?(self.shouldReveal(reveal))
             }
         }
     }
