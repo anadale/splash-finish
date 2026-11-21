@@ -7,10 +7,11 @@ import BobukUpdates
 import OSLog
 import SplashFinishCore
 
-@MainActor final class AppDelegate: NSObject, NSApplicationDelegate {
+@MainActor final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private var model: AppModel!
     private var panel: SplashPanel!
     private var statusItem: NSStatusItem!
+    private var unsnoozeMenuItem: NSMenuItem?
     private var indicatedSnoozeDeadline: Date?
     private var appLock: FileLock?
     private var panelSize = CGSize(width: 470, height: 350)
@@ -144,6 +145,7 @@ import SplashFinishCore
             let deadline = snoozed ? model.inbox.snoozedUntil : nil
             if deadline != indicatedSnoozeDeadline {
                 indicatedSnoozeDeadline = deadline
+                unsnoozeMenuItem?.isEnabled = snoozed
                 if let deadline {
                     let time = deadline.formatted(
                         date: Calendar.current.isDateInToday(deadline) ? .omitted : .abbreviated,
@@ -229,6 +231,9 @@ import SplashFinishCore
         let snoozeItem = NSMenuItem(title: "Snooze", action: nil, keyEquivalent: "")
         snoozeItem.submenu = snoozeMenu
         menu.addItem(snoozeItem)
+        let unsnoozeItem = menuItem("Unsnooze", #selector(unsnooze), in: menu)
+        unsnoozeItem.isEnabled = false
+        unsnoozeMenuItem = unsnoozeItem
         menuItem("Clear All Notifications", #selector(clear), "w", in: menu)
         menu.addItem(.separator())
         menuItem("Send Test Notification", #selector(testNotification), "t", in: menu)
@@ -242,6 +247,12 @@ import SplashFinishCore
         menuItem("Quit Splash Finish", #selector(quit), "q", in: menu)
         statusItem.menu = menu
     }
+
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        menuItem.action != #selector(unsnooze) || model.isSnoozed
+    }
+
+    @objc private func unsnooze() { model.unsnooze() }
     @objc private func showInbox() { model.show() }
     @objc private func snoozeFor(_ sender: NSMenuItem) {
         guard let seconds = sender.representedObject as? TimeInterval else { return }

@@ -160,6 +160,10 @@ import SplashFinishCore
         else { inbox.snooze() }
         persist(); scheduleWake(); onChange?(false)
     }
+    func unsnooze() {
+        guard isSnoozed else { return }
+        inbox.reveal(); persist(); scheduleWake(); onChange?(false)
+    }
     func show() { inbox.reveal(); persist(); scheduleWake(); onChange?(true) }
     func reopen() {
         if !inbox.isTimedSnoozeActive() { show() }

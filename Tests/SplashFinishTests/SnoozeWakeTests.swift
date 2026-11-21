@@ -58,4 +58,30 @@ final class SnoozeWakeTests: XCTestCase {
         }
         await fulfillment(of: [expired], timeout: 2)
     }
+
+    @MainActor
+    func testUnsnoozeKeepsInboxHiddenAndResumesNotifications() async {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let model = AppModel(stateURL: root.appendingPathComponent("state.json"))
+        model.respectFocus = false
+        var reveals: [Bool] = []
+        model.onChange = { reveals.append($0) }
+
+        for deadline in [nil, Date.distantFuture] {
+            model.receive(AgentEvent(task: "old", agent: "Codex", status: .done, title: "First"))
+            model.snooze(until: deadline)
+            XCTAssertTrue(model.isSnoozed)
+            reveals.removeAll()
+
+            model.unsnooze()
+            XCTAssertFalse(model.isSnoozed)
+            XCTAssertEqual(reveals, [false])
+            XCTAssertEqual(model.items.map(\.task), ["old"])
+
+            model.receive(AgentEvent(task: "new", agent: "Codex", status: .attention, title: "Second"))
+            XCTAssertEqual(reveals, [false, true])
+            model.clear()
+        }
+    }
 }
