@@ -71,7 +71,7 @@ import SplashFinishCore
         urls.forEach(handle)
     }
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        model?.show(); return false
+        model?.reopen(); return false
     }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
     func applicationWillTerminate(_ notification: Notification) {
@@ -215,9 +215,12 @@ import SplashFinishCore
     @objc private func showInbox() { model.show() }
     @objc private func snoozeFor(_ sender: NSMenuItem) {
         guard let seconds = sender.representedObject as? TimeInterval else { return }
-        model.snooze(duration: seconds)
+        model.snooze(until: Date().addingTimeInterval(seconds))
     }
-    @objc private func snoozeUntilMorning() { model.snooze(duration: Snooze.untilTomorrowMorning()) }
+    @objc private func snoozeUntilMorning() {
+        let now = Date()
+        model.snooze(until: now.addingTimeInterval(Snooze.untilTomorrowMorning(now: now)))
+    }
     @objc private func clear() { model.clear() }
     @objc private func quit() { NSApp.terminate(nil) }
     @objc private func testNotification() {
